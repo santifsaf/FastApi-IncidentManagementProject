@@ -12,6 +12,8 @@ from app.models.user import User
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Asegura que SQLAlchemy conozca los modelos importados y cree las tablas
+    # faltantes cuando la aplicación arranca.
     Base.metadata.create_all(bind=engine)
     yield
 

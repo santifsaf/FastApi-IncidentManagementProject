@@ -22,6 +22,7 @@ def get_users(db: Session = Depends(get_db)):
 
 @router.get("/me", response_model=UserRead)
 def get_me(current_user: User = Depends(get_current_user)):
+    # La dependencia resuelve el usuario autenticado a partir del token bearer.
     return current_user
 
 
@@ -39,6 +40,7 @@ def get_user(user_id: UUID, db: Session = Depends(get_db)):
 def create_user(user: UserCreate, db: Session = Depends(get_db)):
     new_user = User(
         email=user.email,
+        # Se guarda solo el hash; la contraseña original nunca se persiste.
         password_hash=hash_password(user.password),
         full_name=user.full_name,
     )
