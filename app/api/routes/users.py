@@ -4,13 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_active_user
+from app.core.security import hash_password
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.user import UserCreate, UserRead
-
-from app.core.security import hash_password
-
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -21,8 +19,8 @@ def get_users(db: Session = Depends(get_db)):
 
 
 @router.get("/me", response_model=UserRead)
-def get_me(current_user: User = Depends(get_current_user)):
-    # La dependencia resuelve el usuario autenticado a partir del token bearer.
+def get_me(current_user: User = Depends(get_current_active_user)):
+    # La dependencia resuelve el usuario autenticado y verifica que esté activo.
     return current_user
 
 
@@ -38,12 +36,15 @@ def get_user(user_id: UUID, db: Session = Depends(get_db)):
 
 @router.post("/", response_model=UserRead, status_code=201)
 def create_user(user: UserCreate, db: Session = Depends(get_db)):
-    new_user = User(
-        email=user.email,
-        # Se guarda solo el hash; la contraseña original nunca se persiste.
-        password_hash=hash_password(user.password),
-        full_name=user.full_name,
-    )
+    try:
+        new_user = User(
+            email=user.email,
+            # Se guarda solo el hash; la contraseña original nunca se persiste.
+            password_hash=hash_password(user.password),
+            full_name=user.full_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     db.add(new_user)
     try:

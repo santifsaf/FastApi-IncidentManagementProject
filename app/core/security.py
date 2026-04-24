@@ -11,11 +11,21 @@ pwd_context = CryptContext(
 )
 
 
+def _validate_bcrypt_password_length(password: str) -> None:
+    # bcrypt admite como máximo 72 bytes, no 72 caracteres.
+    if len(password.encode("utf-8")) > 72:
+        raise ValueError("La contraseña no puede superar 72 bytes.")
+
+
 def hash_password(password: str) -> str:
+    _validate_bcrypt_password_length(password)
     return pwd_context.hash(password)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
+    # Si supera el límite de bcrypt, la tratamos como contraseña inválida.
+    if len(plain_password.encode("utf-8")) > 72:
+        return False
     return pwd_context.verify(plain_password, hashed_password)
 
 
