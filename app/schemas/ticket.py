@@ -2,6 +2,7 @@ from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel
+from app.models.ticket import TicketStatus
 
 
 class TicketCreate(BaseModel):
@@ -21,3 +22,6 @@ class TicketRead(BaseModel):
 
     class Config:
         from_attributes = True
+
+class UpdateTicketStatus(BaseModel):
+    status: TicketStatus
