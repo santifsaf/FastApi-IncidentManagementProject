@@ -9,6 +9,8 @@ from app.models.ticket import Ticket, is_valid_status_transition
 from app.models.user import User
 from app.schemas.ticket import TicketCreate, TicketRead, UpdateTicketStatus
 
+from app.services.ticket_service import change_ticket_status
+
 router = APIRouter(prefix="/tickets", tags=["tickets"])
 
 
@@ -63,17 +65,6 @@ def update_ticket_status(
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
 
-    # Valida que el cambio de estado pedido sea permitido según
-    # el estado actual del ticket.
-    if not is_valid_status_transition(ticket.status, ticket_update.status):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid status transition from {ticket.status} to {ticket_update.status}",
-        )
-
-    ticket.status = ticket_update.status
-
-    db.commit()
-    db.refresh(ticket)
+    return change_ticket_status(db, ticket, ticket_update.status, current_user)
 
     return ticket 
