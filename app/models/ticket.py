@@ -41,3 +41,16 @@ class Ticket(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class TicketStatusHistory(Base):
+    __tablename__ = "ticket_status_history"
+
+    id = Column(UUID, primary_key=True)
+    ticket_id = Column(UUID, ForeignKey("tickets.id"))
+
+    old_status = Column(String)
+    new_status = Column(String)
+
+    changed_by = Column(UUID, ForeignKey("users.id"))
+    changed_at = Column(DateTime, default=datetime.utcnow)
