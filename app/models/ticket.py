@@ -1,11 +1,12 @@
 from datetime import datetime
+from enum import Enum
 import uuid
 
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Enum as SqlEnum
+from sqlalchemy import Column, DateTime, Enum as SqlEnum, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import UUID
-from enum import Enum 
 
 from app.db.base import Base
+
 
 class TicketStatus(str, Enum):
     OPEN = "OPEN"
@@ -14,18 +15,7 @@ class TicketStatus(str, Enum):
     RESOLVED = "RESOLVED"
     CLOSED = "CLOSED"
 
-ALLOWED_TRANSITIONS = {
-    TicketStatus.OPEN: {TicketStatus.IN_PROGRESS, TicketStatus.ON_HOLD, TicketStatus.RESOLVED},
-    TicketStatus.IN_PROGRESS: {TicketStatus.ON_HOLD, TicketStatus.RESOLVED},
-    TicketStatus.ON_HOLD: {TicketStatus.IN_PROGRESS, TicketStatus.RESOLVED},
-    TicketStatus.RESOLVED: {TicketStatus.OPEN, TicketStatus.CLOSED},
-    TicketStatus.CLOSED: set(),
-}
 
-def is_valid_status_transition(current_status: TicketStatus, new_status: TicketStatus) -> bool:
-    return new_status in ALLOWED_TRANSITIONS.get(current_status, set())
-
-                                                 
 class Ticket(Base):
     __tablename__ = "tickets"
 
@@ -46,11 +36,12 @@ class Ticket(Base):
 class TicketStatusHistory(Base):
     __tablename__ = "ticket_status_history"
 
-    id = Column(UUID, primary_key=True)
-    ticket_id = Column(UUID, ForeignKey("tickets.id"))
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    ticket_id = Column(UUID(as_uuid=True), ForeignKey("tickets.id"))
 
-    old_status = Column(String)
-    new_status = Column(String)
+    # Conserva una auditoría básica de cada cambio de estado.
+    old_status = Column(SqlEnum(TicketStatus))
+    new_status = Column(SqlEnum(TicketStatus))
 
-    changed_by = Column(UUID, ForeignKey("users.id"))
+    changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     changed_at = Column(DateTime, default=datetime.utcnow)
