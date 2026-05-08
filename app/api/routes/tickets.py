@@ -7,9 +7,9 @@ from app.api.deps import get_current_active_user, require_roles
 from app.db.session import get_db
 from app.models.ticket import Ticket, TicketStatusHistory
 from app.models.user import User
-from app.schemas.ticket import TicketCreate, TicketRead, UpdateTicketStatus, TicketStatusHistoryRead
+from app.schemas.ticket import TicketCreate, TicketRead, UpdateTicketStatus, TicketStatusHistoryRead, TicketAssignment
 from app.services.ticket_service import change_ticket_status
-from app.core.ticket_rules import can_user_change_status
+from app.core.ticket_rules import can_user_change_status, can_user_assign_ticket
 
 router = APIRouter(prefix="/tickets", tags=["tickets"])
 
@@ -98,3 +98,21 @@ def update_ticket_status(
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
     
+
+@router.patch("/{ticket_id}/assign", response_model=TicketAssignment)
+def ticket_assignment(
+    ticket_id:UUID,
+    assigned_user: User = Depends(require_roles("AGENT")),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("ADMIN")),
+):
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+
+    if not ticket:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+    
+    if not can_user_assign_ticket(current_user, assigned_user):
+        raise HTTPException(
+            status_code=403,
+            detail="Mnejo de error dentro de ticket_rules? en el service? ",
+        )

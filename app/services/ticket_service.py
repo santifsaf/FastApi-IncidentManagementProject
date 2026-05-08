@@ -28,3 +28,6 @@ def change_ticket_status(db, ticket, new_status, user):
     db.refresh(ticket)
 
     return ticket
+
+def assign_ticket(db, ticket, assigned_user, current_user):
+    

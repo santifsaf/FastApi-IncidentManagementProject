@@ -37,3 +37,7 @@ class TicketStatusHistoryRead(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class TicketAssignment(BaseModel):
+    assigned_to:UUID 

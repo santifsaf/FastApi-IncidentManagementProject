@@ -15,7 +15,7 @@ def is_valid_status_transition(current_status: TicketStatus, new_status: TicketS
     return new_status in ALLOWED_TRANSITIONS.get(current_status, set())
 
 
-def can_user_change_status(user, current_status, new_status) -> bool:
+def can_user_change_status(user, ticket_status, new_status) -> bool:
     if user.role == "USER":
         return False
 
@@ -24,3 +24,14 @@ def can_user_change_status(user, current_status, new_status) -> bool:
 
     return True
 
+def can_user_assign_ticket(current_user, assigned_user):
+    if current_user.role == "USER":
+        return False
+    if current_user.role == "AGENT":
+        return False    
+    if assigned_user.role == "USER":
+        return False
+    if assigned_user.role == "ADMIN":
+        return False
+    
+    return True
