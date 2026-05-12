@@ -24,14 +24,18 @@ def can_user_change_status(user, ticket_status, new_status) -> bool:
 
     return True
 
-def can_user_assign_ticket(current_user, assigned_user):
-    if current_user.role == "USER":
+def can_user_assign_ticket(current_user, assigned_user) -> bool:
+    # Solo un ADMIN puede asignar tickets.
+    if current_user.role != "ADMIN":
         return False
-    if current_user.role == "AGENT":
-        return False    
-    if assigned_user.role == "USER":
+
+    # El usuario destino debe existir; esta validación protege al service
+    # si alguien lo reutiliza sin validar antes en el endpoint.
+    if assigned_user is None:
         return False
-    if assigned_user.role == "ADMIN":
+
+    # Los tickets solo se asignan a agentes operativos.
+    if assigned_user.role != "AGENT":
         return False
-    
+
     return True

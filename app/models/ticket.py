@@ -45,3 +45,23 @@ class TicketStatusHistory(Base):
 
     changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     changed_at = Column(DateTime, default=datetime.utcnow)
+
+
+class TicketAssignmentHistory(Base):
+    __tablename__ = "ticket_assignment_history"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    ticket_id = Column(UUID(as_uuid=True), ForeignKey("tickets.id"), nullable=False)
+
+    # Usuario que tenía asignado el ticket antes del cambio.
+    # Puede ser NULL si el ticket todavía no estaba asignado.
+    old_assigned_to = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+
+    # Usuario que queda asignado después del cambio.
+    # Puede ser NULL si en el futuro permitís "desasignar" tickets.
+    new_assigned_to = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+
+    # Usuario que realizó la acción de asignar o reasignar.
+    changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+
+    changed_at = Column(DateTime, default=datetime.utcnow, nullable=False)

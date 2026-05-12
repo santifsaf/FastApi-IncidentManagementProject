@@ -39,5 +39,14 @@ class TicketStatusHistoryRead(BaseModel):
         from_attributes = True
 
 
-class TicketAssignment(BaseModel):
+class TicketAssignmentUpdate(BaseModel):
     assigned_to:UUID 
+
+class TicketAssignmentHistoryRead(BaseModel):
+    old_assigned_to: Optional[UUID] = None
+    new_assigned_to: Optional[UUID] = None
+    changed_by: UUID
+    changed_at: datetime
+
+    class Config:
+        from_attributes = True
