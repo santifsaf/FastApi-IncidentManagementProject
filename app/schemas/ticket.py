@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from app.models.ticket import TicketStatus
 
-
+#SCHEMAS GLOBALES DE TICKET
 class TicketCreate(BaseModel):
     title: str
     description: str
@@ -26,6 +26,7 @@ class TicketRead(BaseModel):
         from_attributes = True
 
 
+#SCHEMAS DEL ESTADO DEL TICKET
 class UpdateTicketStatus(BaseModel):
     status: TicketStatus
 
@@ -39,6 +40,7 @@ class TicketStatusHistoryRead(BaseModel):
         from_attributes = True
 
 
+#SCHEMAS DE ASIGNACION
 class TicketAssignmentUpdate(BaseModel):
     assigned_to:UUID 
 

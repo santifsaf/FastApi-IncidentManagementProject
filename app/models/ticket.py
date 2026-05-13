@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 import uuid
 
-from sqlalchemy import Column, DateTime, Enum as SqlEnum, ForeignKey, String, Text
+from sqlalchemy import Column, DateTime, Enum as SqlEnum, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.db.base import Base
@@ -44,7 +44,8 @@ class TicketStatusHistory(Base):
     new_status = Column(SqlEnum(TicketStatus))
 
     changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-    changed_at = Column(DateTime, default=datetime.utcnow)
+    # La base define el timestamp para evitar datetimes sin timezone en Python.
+    changed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class TicketAssignmentHistory(Base):
@@ -64,4 +65,5 @@ class TicketAssignmentHistory(Base):
     # Usuario que realizó la acción de asignar o reasignar.
     changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
 
-    changed_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    # La base define el timestamp para evitar datetimes sin timezone en Python.
+    changed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

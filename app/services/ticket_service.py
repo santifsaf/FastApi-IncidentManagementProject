@@ -23,11 +23,15 @@ def change_ticket_status(db, ticket, new_status, user):
         changed_by=user.id,
     )
 
-    db.add(history)
-    db.commit()
-    db.refresh(ticket)
-
-    return ticket
+    try:
+        db.add(history)
+        db.commit()
+        db.refresh(ticket)
+        return ticket
+    except Exception:
+        # Deja la sesion limpia si falla el commit o el flush implicito.
+        db.rollback()
+        raise
 
 def assign_ticket(db, ticket, current_user, assigned_user):
     # El service vuelve a validar la regla para que la lógica sea segura
@@ -37,6 +41,9 @@ def assign_ticket(db, ticket, current_user, assigned_user):
 
     # Guardamos el responsable anterior antes de modificar el ticket.
     old_assigned_to = ticket.assigned_to
+
+    if old_assigned_to == assigned_user.id:
+        raise ValueError("Ticket already assigned to this user")
 
     # assigned_to es una columna UUID, por eso guardamos assigned_user.id
     # y no el objeto User completo.
@@ -49,8 +56,12 @@ def assign_ticket(db, ticket, current_user, assigned_user):
         changed_by=current_user.id,
     )
 
-    db.add(history)
-    db.commit()
-    db.refresh(ticket)
-
-    return ticket
+    try:
+        db.add(history)
+        db.commit()
+        db.refresh(ticket)
+        return ticket
+    except Exception:
+        # Deja la sesion limpia si falla el commit o el flush implicito.
+        db.rollback()
+        raise

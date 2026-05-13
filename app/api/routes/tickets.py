@@ -121,6 +121,8 @@ def ticket_assignment(
 
     try:
         return assign_ticket(db, ticket, current_user, assigned_user)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
 
