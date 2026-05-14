@@ -39,3 +39,27 @@ def can_user_assign_ticket(current_user, assigned_user) -> bool:
         return False
 
     return True
+
+
+def can_user_view_status_history(user, ticket) -> bool:
+    if user.role == "ADMIN":
+        return True
+
+    if user.role == "AGENT" and ticket.assigned_to == user.id:
+        return True
+
+    if user.role == "USER" and ticket.created_by == user.id:
+        return True
+
+    return False
+
+
+def can_user_view_assignment_history(user, ticket) -> bool:
+    if user.role == "ADMIN":
+        return True
+
+    # El historial de asignaciones es informacion operativa interna.
+    if user.role == "AGENT" and ticket.assigned_to == user.id:
+        return True
+
+    return False

@@ -9,7 +9,11 @@ from app.models.ticket import Ticket, TicketStatusHistory, TicketAssignmentHisto
 from app.models.user import User
 from app.schemas.ticket import TicketCreate, TicketRead, UpdateTicketStatus, TicketStatusHistoryRead, TicketAssignmentUpdate, TicketAssignmentHistoryRead
 from app.services.ticket_service import change_ticket_status, assign_ticket
-from app.core.ticket_rules import can_user_change_status
+from app.core.ticket_rules import (
+    can_user_change_status,
+    can_user_view_assignment_history,
+    can_user_view_status_history,
+)
 
 router = APIRouter(prefix="/tickets", tags=["tickets"])
 
@@ -56,7 +60,7 @@ def get_all_tickets(
 def get_ticket_history(
     ticket_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("ADMIN")),  #DEFINIR REGLAS SEGUN ROL PARA ACCEDER AL HISTORIAL 
+    current_user: User = Depends(get_current_active_user),
 ):
     # Primero validamos que el ticket exista para no devolver un historial vacío
     # cuando en realidad el recurso no existe.
@@ -64,6 +68,12 @@ def get_ticket_history(
 
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
+
+    if not can_user_view_status_history(current_user, ticket):
+        raise HTTPException(
+            status_code=403,
+            detail="Not enough permissions to view ticket status history",
+        )
 
     return (
         db.query(TicketStatusHistory)
@@ -131,7 +141,7 @@ def ticket_assignment(
 def get_ticket_assignment_history(
     ticket_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("ADMIN")),
+    current_user: User = Depends(get_current_active_user),
 ):
     # Validamos que el ticket exista para no confundir "sin historial"
     # con "ticket inexistente".
@@ -139,6 +149,12 @@ def get_ticket_assignment_history(
 
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
+
+    if not can_user_view_assignment_history(current_user, ticket):
+        raise HTTPException(
+            status_code=403,
+            detail="Not enough permissions to view ticket assignment history",
+        )
 
     return (
         db.query(TicketAssignmentHistory)
