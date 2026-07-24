@@ -12,17 +12,17 @@ from app.core.config import settings
 #from app.models.user import User
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+# @asynccontextmanager
+# async def lifespan(app: FastAPI):
     # Asegura que SQLAlchemy conozca los modelos importados y cree las tablas
     # faltantes cuando la aplicación arranca.
     #Base.metadata.create_all(bind=engine) ESTO ESTA COMENTADO PORQUE ESTAMOS USANDO ALEMBIC 
-    yield
+#     yield
 
 
 app = FastAPI(
-    title=settings.app_name,
-    lifespan=lifespan,
+     title=settings.app_name,
+    #  lifespan=lifespan,
 )
 
 app.include_router(auth_router)

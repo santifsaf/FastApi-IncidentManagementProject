@@ -29,7 +29,7 @@ def change_ticket_status(db, ticket, new_status, user):
         db.refresh(ticket)
         return ticket
     except Exception:
-        # Deja la sesion limpia si falla el commit o el flush implicito.
+        # Deja la sesion limpia si falla el commit
         db.rollback()
         raise
 
@@ -62,6 +62,6 @@ def assign_ticket(db, ticket, current_user, assigned_user):
         db.refresh(ticket)
         return ticket
     except Exception:
-        # Deja la sesion limpia si falla el commit o el flush implicito.
+        # Deja la sesion limpia si falla el commit 
         db.rollback()
         raise

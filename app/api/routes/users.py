@@ -5,10 +5,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_active_user
-from app.core.security import hash_password
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.user import UserCreate, UserRead
+from app.services.user_service import UserServiceError, create_user_service
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -37,22 +37,6 @@ def get_user(user_id: UUID, db: Session = Depends(get_db)):
 @router.post("/", response_model=UserRead, status_code=201)
 def create_user(user: UserCreate, db: Session = Depends(get_db)):
     try:
-        new_user = User(
-            email=user.email,
-            # Se guarda solo el hash; la contraseña original nunca se persiste.
-            password_hash=hash_password(user.password),
-            full_name=user.full_name,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    db.add(new_user)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="Email already registered")
-
-    db.refresh(new_user)
-
-    return new_user
+        return create_user_service(db, user)
+    except UserServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc

@@ -3,8 +3,8 @@ from uuid import uuid4
 
 import pytest
 
-from app.models.ticket import TicketAssignmentHistory
-from app.services.ticket_service import assign_ticket
+from app.models.ticket import TicketAssignmentHistory, TicketStatusHistory
+from app.services.ticket_service import assign_ticket, change_ticket_status
 
 
 class FakeDb:
@@ -220,3 +220,60 @@ def test_assign_ticket_rolls_back_when_commit_fails():
         assign_ticket(db, ticket, current_user, assigned_user)
 
     assert db.rolled_back is True
+
+
+def test_change_ticket_status_updates_ticket_and_creates_history():
+    db = FakeDb()
+
+    ticket = SimpleNamespace(
+        id=uuid4(),
+        status="OPEN",
+    )
+
+    current_user = SimpleNamespace(
+        id=uuid4(),
+        role="ADMIN",
+    )
+
+    result = change_ticket_status(db, ticket, "IN_PROGRESS", current_user)
+
+    assert result is ticket
+    assert ticket.status == "IN_PROGRESS"
+    assert db.committed is True
+    assert db.refreshed is ticket
+    assert len(db.added) == 1
+
+    history = db.added[0]
+    assert isinstance(history, TicketStatusHistory)
+    assert history.ticket_id == ticket.id
+    assert history.old_status == "OPEN"
+    assert history.new_status == "IN_PROGRESS"
+    assert history.changed_by == current_user.id
+
+
+def test_change_ticket_status_raises_value_error_for_invalid_transition():
+    db = FakeDb()
+
+    ticket = SimpleNamespace(id=uuid4(), status="CLOSED")
+    current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
+
+    with pytest.raises(ValueError, match="Invalid transition"):
+        change_ticket_status(db, ticket, "OPEN", current_user)
+
+    assert db.added == []
+    assert db.committed is False
+    assert db.refreshed is None
+
+
+def test_change_ticket_status_raises_permission_error_for_unauthorized_user():
+    db = FakeDb()
+
+    ticket = SimpleNamespace(id=uuid4(), status="OPEN")
+    current_user = SimpleNamespace(id=uuid4(), role="USER")
+
+    with pytest.raises(PermissionError, match="Not enough permissions"):
+        change_ticket_status(db, ticket, "IN_PROGRESS", current_user)
+
+    assert db.added == []
+    assert db.committed is False
+    assert db.refreshed is None

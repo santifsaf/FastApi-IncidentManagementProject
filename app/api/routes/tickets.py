@@ -56,8 +56,8 @@ def get_all_tickets(
     return db.query(Ticket).all()
 
 
-@router.get("/{ticket_id}/history", response_model=list[TicketStatusHistoryRead])
-def get_ticket_history(
+@router.get("/{ticket_id}/status-history", response_model=list[TicketStatusHistoryRead])
+def get_ticket_status_history(
     ticket_id: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),

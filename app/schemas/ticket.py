@@ -4,13 +4,13 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from app.models.ticket import TicketStatus
+from app.models.ticket import TicketPriority, TicketStatus
 
 #SCHEMAS GLOBALES DE TICKET
 class TicketCreate(BaseModel):
     title: str
     description: str
-    priority: str = "MEDIUM"
+    priority: TicketPriority = TicketPriority.MEDIUM
 
 
 class TicketRead(BaseModel):
@@ -18,7 +18,7 @@ class TicketRead(BaseModel):
     title: str
     description: str
     status: TicketStatus
-    priority: str
+    priority: TicketPriority
     created_by: UUID
     assigned_to: Optional[UUID] = None
 

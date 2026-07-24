@@ -4,6 +4,7 @@ import uuid
 
 from sqlalchemy import Column, DateTime, Enum as SqlEnum, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 
 from app.db.base import Base
 
@@ -16,6 +17,12 @@ class TicketStatus(str, Enum):
     CLOSED = "CLOSED"
 
 
+class TicketPriority(str, Enum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+
+
 class Ticket(Base):
     __tablename__ = "tickets"
 
@@ -23,11 +30,23 @@ class Ticket(Base):
     title = Column(String, nullable=False)
     description = Column(Text, nullable=False)
     status = Column(SqlEnum(TicketStatus), default=TicketStatus.OPEN, nullable=False)
-    priority = Column(String, nullable=False, default="MEDIUM")
+    priority = Column(SqlEnum(TicketPriority), default=TicketPriority.MEDIUM, nullable=False)
 
     # Guarda qué usuario creó el ticket para poder filtrar "mis tickets".
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     assigned_to = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+
+    creator = relationship(
+        "User",
+        foreign_keys=[created_by],
+        back_populates="created_tickets",
+    )
+
+    assigned_user = relationship(
+        "User",
+        foreign_keys=[assigned_to],
+        back_populates="assigned_tickets",
+    )
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

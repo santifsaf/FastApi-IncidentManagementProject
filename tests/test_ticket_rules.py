@@ -2,9 +2,12 @@ import pytest
 
 from app.core.ticket_rules import (
     can_user_assign_ticket,
+    can_user_change_status,
     can_user_view_assignment_history,
     can_user_view_status_history,
+    is_valid_status_transition,
 )
+from app.models.ticket import TicketStatus
 
 
 class FakeUser:
@@ -46,6 +49,40 @@ def test_cannot_assign_ticket_to_missing_user():
     result = can_user_assign_ticket(current_user, None)
 
     assert result is False
+
+
+@pytest.mark.parametrize(
+    "role, current_status, new_status, expected",
+    [
+        ("ADMIN", TicketStatus.OPEN, TicketStatus.IN_PROGRESS, True),
+        ("AGENT", TicketStatus.OPEN, TicketStatus.ON_HOLD, True),
+        ("AGENT", TicketStatus.OPEN, TicketStatus.CLOSED, False),
+        ("USER", TicketStatus.OPEN, TicketStatus.IN_PROGRESS, False),
+        ("ADMIN", TicketStatus.CLOSED, TicketStatus.OPEN, True),
+    ],
+)
+def test_can_user_change_status(role, current_status, new_status, expected):
+    user = FakeUser(role=role)
+
+    result = can_user_change_status(user, current_status, new_status)
+
+    assert result is expected
+
+
+@pytest.mark.parametrize(
+    "current_status, new_status, expected",
+    [
+        (TicketStatus.OPEN, TicketStatus.IN_PROGRESS, True),
+        (TicketStatus.IN_PROGRESS, TicketStatus.RESOLVED, True),
+        (TicketStatus.RESOLVED, TicketStatus.OPEN, True),
+        (TicketStatus.OPEN, TicketStatus.CLOSED, False),
+        (TicketStatus.CLOSED, TicketStatus.OPEN, False),
+    ],
+)
+def test_is_valid_status_transition(current_status, new_status, expected):
+    result = is_valid_status_transition(current_status, new_status)
+
+    assert result is expected
 
 
 @pytest.mark.parametrize(

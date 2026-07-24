@@ -1,4 +1,5 @@
 from app.models.ticket import TicketStatus
+from app.models.user import UserRole
 
 
 # Define qué cambios de estado están permitidos dentro del flujo básico del ticket.
@@ -16,17 +17,17 @@ def is_valid_status_transition(current_status: TicketStatus, new_status: TicketS
 
 
 def can_user_change_status(user, ticket_status, new_status) -> bool:
-    if user.role == "USER":
+    if user.role == UserRole.USER:
         return False
 
-    if new_status == TicketStatus.CLOSED and user.role != "ADMIN":
+    if new_status == TicketStatus.CLOSED and user.role != UserRole.ADMIN:
         return False
 
     return True
 
 def can_user_assign_ticket(current_user, assigned_user) -> bool:
     # Solo un ADMIN puede asignar tickets.
-    if current_user.role != "ADMIN":
+    if current_user.role != UserRole.ADMIN:
         return False
 
     # El usuario destino debe existir; esta validación protege al service
@@ -35,31 +36,30 @@ def can_user_assign_ticket(current_user, assigned_user) -> bool:
         return False
 
     # Los tickets solo se asignan a agentes operativos.
-    if assigned_user.role != "AGENT":
+    if assigned_user.role != UserRole.AGENT:
         return False
 
     return True
 
 
 def can_user_view_status_history(user, ticket) -> bool:
-    if user.role == "ADMIN":
+    if user.role == UserRole.ADMIN:
         return True
 
-    if user.role == "AGENT" and ticket.assigned_to == user.id:
+    if user.role == UserRole.AGENT and ticket.assigned_to == user.id:
         return True
 
-    if user.role == "USER" and ticket.created_by == user.id:
+    if user.role == UserRole.USER and ticket.created_by == user.id:
         return True
 
     return False
 
 
 def can_user_view_assignment_history(user, ticket) -> bool:
-    if user.role == "ADMIN":
+    if user.role == UserRole.ADMIN:
         return True
 
-    # El historial de asignaciones es informacion operativa interna.
-    if user.role == "AGENT" and ticket.assigned_to == user.id:
+    if user.role == UserRole.AGENT and ticket.assigned_to == user.id:
         return True
 
     return False
