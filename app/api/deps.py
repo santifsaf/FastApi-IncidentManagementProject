@@ -1,8 +1,10 @@
 from uuid import UUID
 
 import jwt
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.core.security import decode_access_token
@@ -26,11 +28,8 @@ def get_current_user(
 
     try:
         payload = decode_access_token(token)
-        user_id = payload.get("sub")
-        if not user_id:
-            raise credentials_exception
-        user_uuid = UUID(user_id)
-    except (jwt.InvalidTokenError, ValueError):
+        user_uuid = payload.sub
+    except (jwt.InvalidTokenError, ValueError, ValidationError):
         raise credentials_exception
 
     user = db.query(User).filter(User.id == user_uuid).first()

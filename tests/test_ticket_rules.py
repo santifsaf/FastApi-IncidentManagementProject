@@ -5,6 +5,7 @@ from app.core.ticket_rules import (
     can_user_change_status,
     can_user_view_assignment_history,
     can_user_view_status_history,
+    is_status_change_reason_required,
     is_valid_status_transition,
 )
 from app.models.ticket import TicketStatus
@@ -52,19 +53,22 @@ def test_cannot_assign_ticket_to_missing_user():
 
 
 @pytest.mark.parametrize(
-    "role, current_status, new_status, expected",
+    "role, assigned_to, current_status, new_status, expected",
     [
-        ("ADMIN", TicketStatus.OPEN, TicketStatus.IN_PROGRESS, True),
-        ("AGENT", TicketStatus.OPEN, TicketStatus.ON_HOLD, True),
-        ("AGENT", TicketStatus.OPEN, TicketStatus.CLOSED, False),
-        ("USER", TicketStatus.OPEN, TicketStatus.IN_PROGRESS, False),
-        ("ADMIN", TicketStatus.CLOSED, TicketStatus.OPEN, True),
+        ("ADMIN", None, TicketStatus.OPEN, TicketStatus.IN_PROGRESS, True),
+        ("ADMIN", None, TicketStatus.OPEN, TicketStatus.CLOSED, True),
+        ("AGENT", "agent-id", TicketStatus.OPEN, TicketStatus.IN_PROGRESS, True),
+        ("AGENT", "other-agent", TicketStatus.OPEN, TicketStatus.IN_PROGRESS, False),
+        ("AGENT", "agent-id", TicketStatus.OPEN, TicketStatus.CLOSED, False),
+        ("USER", None, TicketStatus.OPEN, TicketStatus.IN_PROGRESS, False),
+        ("USER", None, TicketStatus.CLOSED, TicketStatus.OPEN, False),
     ],
 )
-def test_can_user_change_status(role, current_status, new_status, expected):
-    user = FakeUser(role=role)
+def test_can_user_change_status(role, assigned_to, current_status, new_status, expected):
+    user = FakeUser(role=role, id="agent-id" if role == "AGENT" else "user-id")
+    ticket = FakeTicket(assigned_to=assigned_to)
 
-    result = can_user_change_status(user, current_status, new_status)
+    result = can_user_change_status(user, ticket, new_status)
 
     assert result is expected
 
@@ -81,6 +85,22 @@ def test_can_user_change_status(role, current_status, new_status, expected):
 )
 def test_is_valid_status_transition(current_status, new_status, expected):
     result = is_valid_status_transition(current_status, new_status)
+
+    assert result is expected
+
+
+@pytest.mark.parametrize(
+    "current_status, new_status, expected",
+    [
+        (TicketStatus.OPEN, TicketStatus.ON_HOLD, True),
+        (TicketStatus.RESOLVED, TicketStatus.CLOSED, True),
+        (TicketStatus.RESOLVED, TicketStatus.OPEN, True),
+        (TicketStatus.OPEN, TicketStatus.IN_PROGRESS, False),
+        (TicketStatus.IN_PROGRESS, TicketStatus.RESOLVED, False),
+    ],
+)
+def test_is_status_change_reason_required(current_status, new_status, expected):
+    result = is_status_change_reason_required(current_status, new_status)
 
     assert result is expected
 

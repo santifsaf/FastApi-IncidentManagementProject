@@ -16,8 +16,18 @@ def is_valid_status_transition(current_status: TicketStatus, new_status: TicketS
     return new_status in ALLOWED_TRANSITIONS.get(current_status, set())
 
 
-def can_user_change_status(user, ticket_status, new_status) -> bool:
+def is_status_change_reason_required(current_status: TicketStatus, new_status: TicketStatus) -> bool:
+    return (
+        new_status in {TicketStatus.ON_HOLD, TicketStatus.CLOSED}
+        or current_status == TicketStatus.RESOLVED and new_status == TicketStatus.OPEN
+    )
+
+
+def can_user_change_status(user, ticket, new_status) -> bool:
     if user.role == UserRole.USER:
+        return False
+
+    if user.role == UserRole.AGENT and ticket.assigned_to != user.id:
         return False
 
     if new_status == TicketStatus.CLOSED and user.role != UserRole.ADMIN:

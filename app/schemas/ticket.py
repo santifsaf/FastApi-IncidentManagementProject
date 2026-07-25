@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.models.ticket import TicketPriority, TicketStatus
 
@@ -14,6 +14,8 @@ class TicketCreate(BaseModel):
 
 
 class TicketRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     title: str
     description: str
@@ -22,22 +24,20 @@ class TicketRead(BaseModel):
     created_by: UUID
     assigned_to: Optional[UUID] = None
 
-    class Config:
-        from_attributes = True
-
 
 #SCHEMAS DEL ESTADO DEL TICKET
 class UpdateTicketStatus(BaseModel):
     status: TicketStatus
+    reason: Optional[str] = None
 
 class TicketStatusHistoryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     old_status: TicketStatus
     new_status: TicketStatus
+    reason: Optional[str] = None
     changed_by: UUID
     changed_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 #SCHEMAS DE ASIGNACION
@@ -45,10 +45,9 @@ class TicketAssignmentUpdate(BaseModel):
     assigned_to:UUID 
 
 class TicketAssignmentHistoryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     old_assigned_to: Optional[UUID] = None
     new_assigned_to: Optional[UUID] = None
     changed_by: UUID
     changed_at: datetime
-
-    class Config:
-        from_attributes = True

@@ -61,6 +61,7 @@ class TicketStatusHistory(Base):
     # Conserva una auditoría básica de cada cambio de estado.
     old_status = Column(SqlEnum(TicketStatus))
     new_status = Column(SqlEnum(TicketStatus))
+    reason = Column(Text, nullable=True)
 
     changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     # La base define el timestamp para evitar datetimes sin timezone en Python.

@@ -1,6 +1,6 @@
 from sqlalchemy.exc import IntegrityError
 
-from app.core.security import hash_password
+from app.core.security import hash_password, normalize_email
 from app.models.user import User
 from app.schemas.user import UserCreate
 
@@ -13,9 +13,14 @@ class UserServiceError(Exception):
 
 
 def create_user_service(db, user_in: UserCreate) -> User:
+    email = normalize_email(user_in.email)
+    existing_user = db.query(User).filter(User.email == email).first()
+    if existing_user:
+        raise UserServiceError("Email already registered", 409)
+
     try:
         new_user = User(
-            email=user_in.email,
+            email=email,
             password_hash=hash_password(user_in.password),
             full_name=user_in.full_name,
         )
@@ -26,9 +31,11 @@ def create_user_service(db, user_in: UserCreate) -> User:
 
     try:
         db.commit()
+        db.refresh(new_user)
+        return new_user
     except IntegrityError as exc:
         db.rollback()
         raise UserServiceError("Email already registered", 409) from exc
-
-    db.refresh(new_user)
-    return new_user
+    except Exception:
+        db.rollback()
+        raise

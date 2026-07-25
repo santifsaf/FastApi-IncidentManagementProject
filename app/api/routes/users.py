@@ -1,12 +1,11 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_active_user
+from app.api.deps import get_current_active_user, require_roles
 from app.db.session import get_db
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.schemas.user import UserCreate, UserRead
 from app.services.user_service import UserServiceError, create_user_service
 
@@ -14,7 +13,10 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 
 @router.get("/", response_model=list[UserRead])
-def get_users(db: Session = Depends(get_db)):
+def get_users(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("ADMIN")),
+):
     return db.query(User).all()
 
 
@@ -25,7 +27,14 @@ def get_me(current_user: User = Depends(get_current_active_user)):
 
 
 @router.get("/{user_id}", response_model=UserRead)
-def get_user(user_id: UUID, db: Session = Depends(get_db)):
+def get_user(
+    user_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    if current_user.role != UserRole.ADMIN and current_user.id != user_id:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+
     user = db.query(User).filter(User.id == user_id).first()
 
     if not user:
@@ -35,7 +44,11 @@ def get_user(user_id: UUID, db: Session = Depends(get_db)):
 
 
 @router.post("/", response_model=UserRead, status_code=201)
-def create_user(user: UserCreate, db: Session = Depends(get_db)):
+def create_user(
+    user: UserCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("ADMIN")),
+):
     try:
         return create_user_service(db, user)
     except UserServiceError as exc:

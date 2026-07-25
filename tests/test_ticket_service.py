@@ -3,8 +3,16 @@ from uuid import uuid4
 
 import pytest
 
-from app.models.ticket import TicketAssignmentHistory, TicketStatusHistory
-from app.services.ticket_service import assign_ticket, change_ticket_status
+from app.models.ticket import Ticket, TicketAssignmentHistory, TicketPriority, TicketStatusHistory
+from app.services.ticket_service import (
+    InvalidStatusTransitionError,
+    MissingStatusChangeReasonError,
+    TicketAlreadyAssignedError,
+    TicketPermissionError,
+    assign_ticket,
+    change_ticket_status,
+    create_ticket_service,
+)
 
 
 class FakeDb:
@@ -44,6 +52,44 @@ class FakeDb:
 class FailingCommitDb(FakeDb):
     def commit(self):
         raise RuntimeError("Commit failed")
+
+
+def test_create_ticket_service_creates_ticket():
+    db = FakeDb()
+    ticket_in = SimpleNamespace(
+        title="Error login",
+        description="No puedo ingresar",
+        priority=TicketPriority.HIGH,
+    )
+    current_user = SimpleNamespace(id=uuid4())
+
+    result = create_ticket_service(db, ticket_in, current_user)
+
+    assert isinstance(result, Ticket)
+    assert result.title == ticket_in.title
+    assert result.description == ticket_in.description
+    assert result.priority == TicketPriority.HIGH
+    assert result.created_by == current_user.id
+    assert db.added == [result]
+    assert db.committed is True
+    assert db.refreshed is result
+    assert db.rolled_back is False
+
+
+def test_create_ticket_service_rolls_back_when_commit_fails():
+    db = FailingCommitDb()
+    ticket_in = SimpleNamespace(
+        title="Error login",
+        description="No puedo ingresar",
+        priority=TicketPriority.HIGH,
+    )
+    current_user = SimpleNamespace(id=uuid4())
+
+    with pytest.raises(RuntimeError, match="Commit failed"):
+        create_ticket_service(db, ticket_in, current_user)
+
+    assert len(db.added) == 1
+    assert db.rolled_back is True
 
 
 def test_assign_ticket_updates_ticket_and_creates_history():
@@ -121,7 +167,7 @@ def test_assign_ticket_raises_permission_error_when_user_cannot_assign():
     Caso invalido:
     - Un USER intenta asignar un ticket.
     - La regla no lo permite.
-    - El service lanza PermissionError.
+    - El service lanza TicketPermissionError.
     - No modifica el ticket.
     - No crea historial.
     """
@@ -143,7 +189,7 @@ def test_assign_ticket_raises_permission_error_when_user_cannot_assign():
         role="AGENT",
     )
 
-    with pytest.raises(PermissionError):
+    with pytest.raises(TicketPermissionError):
         assign_ticket(db, ticket, current_user, assigned_user)
 
     # Como fallo por permisos, el ticket no deberia modificarse.
@@ -184,7 +230,7 @@ def test_assign_ticket_raises_value_error_when_agent_is_already_assigned():
         role="AGENT",
     )
 
-    with pytest.raises(ValueError, match="Ticket already assigned"):
+    with pytest.raises(TicketAlreadyAssignedError, match="Ticket already assigned"):
         assign_ticket(db, ticket, current_user, assigned_user)
 
     assert ticket.assigned_to == assigned_user_id
@@ -248,7 +294,74 @@ def test_change_ticket_status_updates_ticket_and_creates_history():
     assert history.ticket_id == ticket.id
     assert history.old_status == "OPEN"
     assert history.new_status == "IN_PROGRESS"
+    assert history.reason is None
     assert history.changed_by == current_user.id
+
+
+def test_change_ticket_status_saves_reason_when_provided():
+    db = FakeDb()
+
+    ticket = SimpleNamespace(
+        id=uuid4(),
+        status="OPEN",
+    )
+
+    current_user = SimpleNamespace(
+        id=uuid4(),
+        role="ADMIN",
+    )
+
+    result = change_ticket_status(db, ticket, "ON_HOLD", current_user, "Waiting for provider")
+
+    assert result is ticket
+    assert ticket.status == "ON_HOLD"
+
+    history = db.added[0]
+    assert history.reason == "Waiting for provider"
+
+
+def test_change_ticket_status_requires_reason_for_sensitive_status_change():
+    db = FakeDb()
+
+    ticket = SimpleNamespace(
+        id=uuid4(),
+        status="OPEN",
+    )
+
+    current_user = SimpleNamespace(
+        id=uuid4(),
+        role="ADMIN",
+    )
+
+    with pytest.raises(MissingStatusChangeReasonError, match="Reason is required"):
+        change_ticket_status(db, ticket, "ON_HOLD", current_user)
+
+    assert ticket.status == "OPEN"
+    assert db.added == []
+    assert db.committed is False
+    assert db.refreshed is None
+
+
+def test_change_ticket_status_treats_blank_reason_as_missing():
+    db = FakeDb()
+
+    ticket = SimpleNamespace(
+        id=uuid4(),
+        status="RESOLVED",
+    )
+
+    current_user = SimpleNamespace(
+        id=uuid4(),
+        role="ADMIN",
+    )
+
+    with pytest.raises(MissingStatusChangeReasonError, match="Reason is required"):
+        change_ticket_status(db, ticket, "OPEN", current_user, "   ")
+
+    assert ticket.status == "RESOLVED"
+    assert db.added == []
+    assert db.committed is False
+    assert db.refreshed is None
 
 
 def test_change_ticket_status_raises_value_error_for_invalid_transition():
@@ -257,7 +370,7 @@ def test_change_ticket_status_raises_value_error_for_invalid_transition():
     ticket = SimpleNamespace(id=uuid4(), status="CLOSED")
     current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
 
-    with pytest.raises(ValueError, match="Invalid transition"):
+    with pytest.raises(InvalidStatusTransitionError, match="Invalid transition"):
         change_ticket_status(db, ticket, "OPEN", current_user)
 
     assert db.added == []
@@ -271,7 +384,7 @@ def test_change_ticket_status_raises_permission_error_for_unauthorized_user():
     ticket = SimpleNamespace(id=uuid4(), status="OPEN")
     current_user = SimpleNamespace(id=uuid4(), role="USER")
 
-    with pytest.raises(PermissionError, match="Not enough permissions"):
+    with pytest.raises(TicketPermissionError, match="Not enough permissions"):
         change_ticket_status(db, ticket, "IN_PROGRESS", current_user)
 
     assert db.added == []

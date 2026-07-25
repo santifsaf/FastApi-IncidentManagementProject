@@ -8,9 +8,16 @@ from app.db.session import get_db
 from app.models.ticket import Ticket, TicketStatusHistory, TicketAssignmentHistory
 from app.models.user import User
 from app.schemas.ticket import TicketCreate, TicketRead, UpdateTicketStatus, TicketStatusHistoryRead, TicketAssignmentUpdate, TicketAssignmentHistoryRead
-from app.services.ticket_service import change_ticket_status, assign_ticket
+from app.services.ticket_service import (
+    InvalidStatusTransitionError,
+    MissingStatusChangeReasonError,
+    TicketAlreadyAssignedError,
+    TicketPermissionError,
+    assign_ticket,
+    change_ticket_status,
+    create_ticket_service,
+)
 from app.core.ticket_rules import (
-    can_user_change_status,
     can_user_view_assignment_history,
     can_user_view_status_history,
 )
@@ -24,27 +31,25 @@ def create_ticket(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    new_ticket = Ticket(
-        title=ticket.title,
-        description=ticket.description,
-        priority=ticket.priority,
-        created_by=current_user.id,
-    )
-
-    db.add(new_ticket)
-    db.commit()
-    db.refresh(new_ticket)
-
-    return new_ticket
+    return create_ticket_service(db, ticket, current_user)
 
 
-@router.get("/my", response_model=list[TicketRead])
-def get_my_tickets(
+@router.get("/created-by-me", response_model=list[TicketRead])
+def get_tickets_created_by_me(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    # Solo devuelve tickets creados por el usuario autenticado.
+    # Tickets que el usuario autenticado creo como solicitante.
     return db.query(Ticket).filter(Ticket.created_by == current_user.id).all()
+
+
+@router.get("/assigned-to-me", response_model=list[TicketRead])
+def get_tickets_assigned_to_me(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("AGENT", "ADMIN")),
+):
+    # Tickets que el usuario autenticado tiene asignados como responsable.
+    return db.query(Ticket).filter(Ticket.assigned_to == current_user.id).all()
 
 
 @router.get("/", response_model=list[TicketRead])
@@ -95,17 +100,11 @@ def update_ticket_status(
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
 
-    if not can_user_change_status(current_user, ticket.status, ticket_update.status):
-        raise HTTPException(
-            status_code=403,
-            detail="Not enough permissions to change ticket status",
-        )
-
     try:
-        return change_ticket_status(db, ticket, ticket_update.status, current_user)
-    except ValueError as exc:
+        return change_ticket_status(db, ticket, ticket_update.status, current_user, ticket_update.reason)
+    except (InvalidStatusTransitionError, MissingStatusChangeReasonError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    except PermissionError as exc:
+    except TicketPermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
     
 
@@ -131,9 +130,9 @@ def ticket_assignment(
 
     try:
         return assign_ticket(db, ticket, current_user, assigned_user)
-    except ValueError as exc:
+    except TicketAlreadyAssignedError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    except PermissionError as exc:
+    except TicketPermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
 
 

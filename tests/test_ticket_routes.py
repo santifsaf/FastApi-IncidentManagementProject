@@ -38,6 +38,26 @@ class FakeSession:
         raise AssertionError(f"Unexpected model queried: {model}")
 
 
+def test_created_by_me_endpoint_returns_created_tickets():
+    user = SimpleNamespace(id=uuid4(), role=UserRole.USER)
+    ticket = SimpleNamespace(id=uuid4(), created_by=user.id, assigned_to=None)
+    fake_session = FakeSession(ticket=ticket)
+
+    result = tickets_routes.get_tickets_created_by_me(fake_session, user)
+
+    assert result == [ticket]
+
+
+def test_assigned_to_me_endpoint_returns_assigned_tickets():
+    user = SimpleNamespace(id=uuid4(), role=UserRole.AGENT)
+    ticket = SimpleNamespace(id=uuid4(), created_by=uuid4(), assigned_to=user.id)
+    fake_session = FakeSession(ticket=ticket)
+
+    result = tickets_routes.get_tickets_assigned_to_me(fake_session, user)
+
+    assert result == [ticket]
+
+
 def test_status_history_endpoint_returns_403_for_unauthorized_user(monkeypatch):
     user = SimpleNamespace(id=uuid4(), role=UserRole.USER)
     ticket = SimpleNamespace(id=uuid4(), created_by=uuid4(), assigned_to=None)
