@@ -6,7 +6,7 @@ from sqlalchemy import pool
 from alembic import context
 from app.core.config import settings
 from app.db.base import Base
-from app.models import ticket, user
+from app.models import category, team, ticket, user
 
 # Objeto de configuracion de Alembic. Desde aca se leen valores de alembic.ini.
 config = context.config
@@ -16,7 +16,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Base.metadata contiene las tablas que SQLAlchemy conoce.
-# Los imports de app.models registran User, Ticket e historiales en esta metadata.
+# Los imports de app.models registran User, Team, Category, Ticket e historiales en esta metadata.
 target_metadata = Base.metadata
 
 # Reemplaza la URL generica de alembic.ini por la URL real del proyecto.

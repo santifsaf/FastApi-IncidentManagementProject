@@ -1,0 +1,173 @@
+from uuid import UUID
+
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.models.team import Team, TeamMember
+from app.models.user import User, UserRole
+from app.schemas.team import TeamCreate
+
+
+class TeamServiceError(Exception):
+    pass
+
+
+class TeamNotFoundError(TeamServiceError):
+    pass
+
+
+class TeamLeadNotFoundError(TeamServiceError):
+    pass
+
+
+class InvalidTeamLeadError(TeamServiceError):
+    pass
+
+
+class TeamAlreadyExistsError(TeamServiceError):
+    pass
+
+
+class InvalidTeamNameError(TeamServiceError):
+    pass
+
+
+class UserNotFoundError(TeamServiceError):
+    pass
+
+
+class InvalidTeamMemberError(TeamServiceError):
+    pass
+
+
+class TeamMemberAlreadyExistsError(TeamServiceError):
+    pass
+
+
+class TeamMemberNotFoundError(TeamServiceError):
+    pass
+
+
+class TeamLeadRemovalError(TeamServiceError):
+    pass
+
+
+class TeamDataConflictError(TeamServiceError):
+    pass
+
+
+def _normalize_team_name(name: str) -> str:
+    normalized_name = name.strip()
+    if not normalized_name:
+        raise InvalidTeamNameError("Team name cannot be empty")
+
+    return normalized_name
+
+
+def create_team_service(db: Session, team_in: TeamCreate) -> Team:
+    """Crea un equipo y agrega al lead como primer miembro.
+
+    Esta funcion representa el caso de uso completo: normaliza el nombre,
+    busca el lead, valida que sea AGENT activo y persiste todo junto.
+    """
+
+    normalized_name = _normalize_team_name(team_in.name)
+
+    existing_team = db.query(Team).filter(Team.name == normalized_name).first()
+    if existing_team:
+        raise TeamAlreadyExistsError("Team already exists")
+
+    lead_user = db.query(User).filter(User.id == team_in.lead_id).first()
+    if lead_user is None:
+        raise TeamLeadNotFoundError("Team lead not found")
+
+    if lead_user.role != UserRole.AGENT:
+        raise InvalidTeamLeadError("Team lead must be an agent")
+
+    if not lead_user.is_active:
+        raise InvalidTeamLeadError("Inactive users cannot lead a team")
+
+    team = Team(name=normalized_name, lead_id=lead_user.id)
+
+    try:
+        db.add(team)
+        db.flush()
+
+        # Crear el team y su miembro lead en la misma transaccion evita
+        # equipos incompletos si falla una de las dos operaciones.
+        db.add(TeamMember(team_id=team.id, user_id=lead_user.id))
+        db.commit()
+        db.refresh(team)
+        return team
+    except IntegrityError as exc:
+        db.rollback()
+        raise TeamDataConflictError("The team could not be created because of a data conflict") from exc
+    except Exception:
+        db.rollback()
+        raise
+
+
+def add_team_member_service(db: Session, team_id: UUID, user_id: UUID) -> TeamMember:
+    """Agrega un AGENT activo a un equipo existente."""
+
+    team = db.query(Team).filter(Team.id == team_id).first()
+    if team is None:
+        raise TeamNotFoundError("Team not found")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None:
+        raise UserNotFoundError("User not found")
+
+    if user.role != UserRole.AGENT:
+        raise InvalidTeamMemberError("Only agents can be team members")
+
+    if not user.is_active:
+        raise InvalidTeamMemberError("Inactive users cannot join a team")
+
+    existing_member = (
+        db.query(TeamMember.id)
+        .filter(TeamMember.team_id == team.id, TeamMember.user_id == user.id)
+        .first()
+    )
+    if existing_member:
+        raise TeamMemberAlreadyExistsError("User already belongs to this team")
+
+    member = TeamMember(team_id=team.id, user_id=user.id)
+
+    try:
+        db.add(member)
+        db.commit()
+        db.refresh(member)
+        return member
+    except IntegrityError as exc:
+        db.rollback()
+        raise TeamMemberAlreadyExistsError("User already belongs to this team") from exc
+    except Exception:
+        db.rollback()
+        raise
+
+
+def remove_team_member_service(db: Session, team_id: UUID, user_id: UUID) -> None:
+    """Quita un miembro sin permitir romper la regla de lead obligatorio."""
+
+    team = db.query(Team).filter(Team.id == team_id).first()
+    if team is None:
+        raise TeamNotFoundError("Team not found")
+
+    if team.lead_id == user_id:
+        raise TeamLeadRemovalError("Team lead cannot be removed from the team")
+
+    member = (
+        db.query(TeamMember)
+        .filter(TeamMember.team_id == team.id, TeamMember.user_id == user_id)
+        .first()
+    )
+    if not member:
+        raise TeamMemberNotFoundError("Team member not found")
+
+    try:
+        db.delete(member)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise

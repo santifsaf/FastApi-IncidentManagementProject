@@ -18,6 +18,14 @@ class FakeQuery:
     def order_by(self, *args, **kwargs):
         return self
 
+    def offset(self, skip):
+        self.items = self.items[skip:]
+        return self
+
+    def limit(self, limit):
+        self.items = self.items[:limit]
+        return self
+
     def first(self):
         return self.items[0] if self.items else None
 
@@ -26,13 +34,13 @@ class FakeQuery:
 
 
 class FakeSession:
-    def __init__(self, ticket=None, history=None):
-        self.ticket = ticket
+    def __init__(self, ticket=None, tickets=None, history=None):
+        self.tickets = tickets if tickets is not None else ([ticket] if ticket else [])
         self.history = history or []
 
     def query(self, model):
         if model.__name__ == "Ticket":
-            return FakeQuery([self.ticket] if self.ticket else [])
+            return FakeQuery(self.tickets)
         if model.__name__ in {"TicketStatusHistory", "TicketAssignmentHistory"}:
             return FakeQuery(self.history)
         raise AssertionError(f"Unexpected model queried: {model}")
@@ -40,7 +48,7 @@ class FakeSession:
 
 def test_created_by_me_endpoint_returns_created_tickets():
     user = SimpleNamespace(id=uuid4(), role=UserRole.USER)
-    ticket = SimpleNamespace(id=uuid4(), created_by=user.id, assigned_to=None)
+    ticket = SimpleNamespace(id=uuid4(), created_by=user.id, assigned_to=None, team_id=None)
     fake_session = FakeSession(ticket=ticket)
 
     result = tickets_routes.get_tickets_created_by_me(fake_session, user)
@@ -50,7 +58,7 @@ def test_created_by_me_endpoint_returns_created_tickets():
 
 def test_assigned_to_me_endpoint_returns_assigned_tickets():
     user = SimpleNamespace(id=uuid4(), role=UserRole.AGENT)
-    ticket = SimpleNamespace(id=uuid4(), created_by=uuid4(), assigned_to=user.id)
+    ticket = SimpleNamespace(id=uuid4(), created_by=uuid4(), assigned_to=user.id, team_id=None)
     fake_session = FakeSession(ticket=ticket)
 
     result = tickets_routes.get_tickets_assigned_to_me(fake_session, user)
@@ -58,9 +66,23 @@ def test_assigned_to_me_endpoint_returns_assigned_tickets():
     assert result == [ticket]
 
 
+def test_get_all_tickets_endpoint_applies_pagination():
+    admin = SimpleNamespace(id=uuid4(), role=UserRole.ADMIN)
+    tickets = [
+        SimpleNamespace(id=uuid4(), team_id=None),
+        SimpleNamespace(id=uuid4(), team_id=None),
+        SimpleNamespace(id=uuid4(), team_id=None),
+    ]
+    fake_session = FakeSession(tickets=tickets)
+
+    result = tickets_routes.get_all_tickets(fake_session, admin, skip=1, limit=1)
+
+    assert result == [tickets[1]]
+
+
 def test_status_history_endpoint_returns_403_for_unauthorized_user(monkeypatch):
     user = SimpleNamespace(id=uuid4(), role=UserRole.USER)
-    ticket = SimpleNamespace(id=uuid4(), created_by=uuid4(), assigned_to=None)
+    ticket = SimpleNamespace(id=uuid4(), created_by=uuid4(), assigned_to=None, team_id=None)
     fake_session = FakeSession(ticket=ticket, history=[])
 
     monkeypatch.setattr(tickets_routes, "get_db", lambda: fake_session)
@@ -74,7 +96,7 @@ def test_status_history_endpoint_returns_403_for_unauthorized_user(monkeypatch):
 
 def test_assignment_history_endpoint_returns_200_for_assigned_agent(monkeypatch):
     user = SimpleNamespace(id=uuid4(), role=UserRole.AGENT)
-    ticket = SimpleNamespace(id=uuid4(), created_by=uuid4(), assigned_to=user.id)
+    ticket = SimpleNamespace(id=uuid4(), created_by=uuid4(), assigned_to=user.id, team_id=None)
     history_item = SimpleNamespace(
         ticket_id=ticket.id,
         old_assigned_to=None,

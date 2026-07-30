@@ -10,6 +10,7 @@ from app.models.ticket import TicketPriority, TicketStatus
 class TicketCreate(BaseModel):
     title: str
     description: str
+    category_id: UUID
     priority: TicketPriority = TicketPriority.MEDIUM
 
 
@@ -23,6 +24,8 @@ class TicketRead(BaseModel):
     priority: TicketPriority
     created_by: UUID
     assigned_to: Optional[UUID] = None
+    team_id: Optional[UUID] = None
+    category_id: UUID
 
 
 #SCHEMAS DEL ESTADO DEL TICKET
@@ -43,6 +46,10 @@ class TicketStatusHistoryRead(BaseModel):
 #SCHEMAS DE ASIGNACION
 class TicketAssignmentUpdate(BaseModel):
     assigned_to:UUID 
+
+
+class TicketTeamAssignmentUpdate(BaseModel):
+    team_id: UUID
 
 class TicketAssignmentHistoryRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)

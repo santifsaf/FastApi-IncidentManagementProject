@@ -38,3 +38,15 @@ class User(Base):
         foreign_keys="Ticket.assigned_to",
         back_populates="assigned_user",
     )
+
+    led_teams = relationship(
+        "Team",
+        foreign_keys="Team.lead_id",
+        back_populates="lead",
+    )
+
+    team_memberships = relationship(
+        "TeamMember",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )

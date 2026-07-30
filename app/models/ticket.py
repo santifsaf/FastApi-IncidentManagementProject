@@ -35,6 +35,8 @@ class Ticket(Base):
     # Guarda qué usuario creó el ticket para poder filtrar "mis tickets".
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     assigned_to = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    team_id = Column(UUID(as_uuid=True), ForeignKey("teams.id"), nullable=True)
+    category_id = Column(UUID(as_uuid=True), ForeignKey("ticket_categories.id"), nullable=False)
 
     creator = relationship(
         "User",
@@ -48,6 +50,9 @@ class Ticket(Base):
         back_populates="assigned_tickets",
     )
 
+    team = relationship("Team", back_populates="tickets")
+    category = relationship("TicketCategory", back_populates="tickets")
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -56,14 +61,14 @@ class TicketStatusHistory(Base):
     __tablename__ = "ticket_status_history"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    ticket_id = Column(UUID(as_uuid=True), ForeignKey("tickets.id"))
+    ticket_id = Column(UUID(as_uuid=True), ForeignKey("tickets.id"), nullable=False)
 
     # Conserva una auditoría básica de cada cambio de estado.
-    old_status = Column(SqlEnum(TicketStatus))
-    new_status = Column(SqlEnum(TicketStatus))
+    old_status = Column(SqlEnum(TicketStatus), nullable=False)
+    new_status = Column(SqlEnum(TicketStatus), nullable=False)
     reason = Column(Text, nullable=True)
 
-    changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     # La base define el timestamp para evitar datetimes sin timezone en Python.
     changed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

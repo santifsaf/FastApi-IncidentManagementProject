@@ -3,6 +3,7 @@ import pytest
 from app.core.ticket_rules import (
     can_user_assign_ticket,
     can_user_change_status,
+    can_user_view_ticket,
     can_user_view_assignment_history,
     can_user_view_status_history,
     is_status_change_reason_required,
@@ -20,9 +21,10 @@ class FakeUser:
 
 class FakeTicket:
 
-    def __init__(self, created_by=None, assigned_to=None):
+    def __init__(self, created_by=None, assigned_to=None, team_id=None):
         self.created_by = created_by
         self.assigned_to = assigned_to
+        self.team_id = team_id
 
 
 @pytest.mark.parametrize(
@@ -44,12 +46,53 @@ def test_can_user_assign_ticket_by_role(current_role, assigned_role, expected):
     assert result is expected
 
 
+def test_team_lead_can_assign_ticket_to_member_of_own_team():
+    current_user = FakeUser(role="AGENT", id="lead-id")
+    assigned_user = FakeUser(role="AGENT", id="agent-id")
+    ticket = FakeTicket(team_id="team-id")
+
+    result = can_user_assign_ticket(
+        current_user,
+        assigned_user,
+        ticket,
+        is_current_user_team_lead=True,
+        is_assigned_user_team_member=True,
+    )
+
+    assert result is True
+
+
+def test_team_lead_cannot_assign_ticket_to_agent_outside_team():
+    current_user = FakeUser(role="AGENT", id="lead-id")
+    assigned_user = FakeUser(role="AGENT", id="agent-id")
+    ticket = FakeTicket(team_id="team-id")
+
+    result = can_user_assign_ticket(
+        current_user,
+        assigned_user,
+        ticket,
+        is_current_user_team_lead=True,
+        is_assigned_user_team_member=False,
+    )
+
+    assert result is False
+
+
 def test_cannot_assign_ticket_to_missing_user():
     current_user = FakeUser(role="ADMIN")
 
     result = can_user_assign_ticket(current_user, None)
 
     assert result is False
+
+
+def test_agent_can_view_ticket_from_own_team():
+    user = FakeUser(role="AGENT", id="agent-id")
+    ticket = FakeTicket(created_by="user-id", assigned_to=None, team_id="team-id")
+
+    result = can_user_view_ticket(user, ticket, is_team_member=True)
+
+    assert result is True
 
 
 @pytest.mark.parametrize(
