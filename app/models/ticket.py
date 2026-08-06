@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 import uuid
 
-from sqlalchemy import Column, DateTime, Enum as SqlEnum, ForeignKey, String, Text, func
+from sqlalchemy import Boolean, Column, DateTime, Enum as SqlEnum, ForeignKey, Index, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -92,3 +92,63 @@ class TicketAssignmentHistory(Base):
 
     # La base define el timestamp para evitar datetimes sin timezone en Python.
     changed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class TicketTeamHistory(Base):
+    __tablename__ = "ticket_team_history"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    ticket_id = Column(UUID(as_uuid=True), ForeignKey("tickets.id"), nullable=False)
+
+    # Puede ser NULL cuando el ticket pasa de no tener equipo a tener uno.
+    old_team_id = Column(UUID(as_uuid=True), ForeignKey("teams.id"), nullable=True)
+    new_team_id = Column(UUID(as_uuid=True), ForeignKey("teams.id"), nullable=True)
+
+    changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    changed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class TicketCategoryHistory(Base):
+    __tablename__ = "ticket_category_history"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    ticket_id = Column(UUID(as_uuid=True), ForeignKey("tickets.id"), nullable=False)
+
+    old_category_id = Column(UUID(as_uuid=True), ForeignKey("ticket_categories.id"), nullable=False)
+    new_category_id = Column(UUID(as_uuid=True), ForeignKey("ticket_categories.id"), nullable=False)
+
+    # Cambiar categoria puede cambiar el equipo responsable, por eso exigimos motivo.
+    reason = Column(Text, nullable=False)
+    changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    changed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class TicketDependency(Base):
+    __tablename__ = "ticket_dependencies"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # ticket_id es el ticket que queda bloqueado.
+    ticket_id = Column(UUID(as_uuid=True), ForeignKey("tickets.id"), nullable=False)
+
+    # depends_on_ticket_id es el ticket que debe resolverse antes.
+    depends_on_ticket_id = Column(UUID(as_uuid=True), ForeignKey("tickets.id"), nullable=False)
+
+    reason = Column(Text, nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # Soft delete: la dependencia queda registrada, pero deja de bloquear.
+    is_active = Column(Boolean, default=True, nullable=False)
+    removed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    removed_at = Column(DateTime(timezone=True), nullable=True)
+    removed_reason = Column(Text, nullable=True)
+
+
+Index(
+    "uq_ticket_dependencies_active_pair",
+    TicketDependency.ticket_id,
+    TicketDependency.depends_on_ticket_id,
+    unique=True,
+    postgresql_where=TicketDependency.is_active.is_(True),
+)

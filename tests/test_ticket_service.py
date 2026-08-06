@@ -3,23 +3,42 @@ from uuid import uuid4
 
 import pytest
 
-from app.models.category import TicketCategory
+from app.models.category import CategoryTeam, TicketCategory
 from app.models.team import Team, TeamMember
-from app.models.ticket import Ticket, TicketAssignmentHistory, TicketPriority, TicketStatus, TicketStatusHistory
+from app.models.ticket import (
+    Ticket,
+    TicketAssignmentHistory,
+    TicketCategoryHistory,
+    TicketDependency,
+    TicketPriority,
+    TicketStatus,
+    TicketStatusHistory,
+    TicketTeamHistory,
+)
 from app.models.user import User
 from app.services.ticket_service import (
     InvalidStatusTransitionError,
     InvalidAssignedUserError,
+    InvalidTicketCategoryChangeError,
     InvalidTicketCategoryError,
+    MissingCategoryChangeReasonError,
     MissingStatusChangeReasonError,
+    TicketBlockedByOpenDependenciesError,
     TicketAlreadyAssignedError,
     TicketCategoryNotFoundError,
+    TicketDependencyError,
+    TicketDependencyNotFoundError,
     TicketTeamAssignmentError,
+    TicketTeamPermissionError,
     TicketPermissionError,
+    add_ticket_dependency,
     assign_ticket,
     assign_ticket_to_team,
+    change_ticket_category,
     change_ticket_status,
+    create_blocking_ticket,
     create_ticket_service,
+    remove_ticket_dependency,
 )
 
 
@@ -44,6 +63,12 @@ class FakeDb:
         # Permite saber si el service limpio la sesion luego de un error.
         self.rolled_back = False
 
+        # Permite verificar flujos donde necesitamos INSERT antes del commit.
+        self.flushed = False
+
+        # Guarda los objetos que el service intenta eliminar.
+        self.deleted = []
+
     def add(self, obj):
         self.added.append(obj)
 
@@ -56,6 +81,16 @@ class FakeDb:
     def rollback(self):
         self.rolled_back = True
 
+    def flush(self):
+        self.flushed = True
+        # Simula que SQLAlchemy/base asignan el UUID al hacer INSERT.
+        for obj in self.added:
+            if isinstance(obj, Ticket) and getattr(obj, "id", None) is None:
+                obj.id = uuid4()
+
+    def delete(self, obj):
+        self.deleted.append(obj)
+
 
 class FailingCommitDb(FakeDb):
     def commit(self):
@@ -63,30 +98,80 @@ class FailingCommitDb(FakeDb):
 
 
 class FakeQuery:
-    def __init__(self, item=None):
+    def __init__(self, item=None, items=None):
         self.item = item
+        self.items = items if items is not None else ([] if item is None else [item])
 
     def filter(self, *args, **kwargs):
+        return self
+
+    def join(self, *args, **kwargs):
+        return self
+
+    def order_by(self, *args, **kwargs):
         return self
 
     def first(self):
         return self.item
 
+    def all(self):
+        return self.items
+
 
 class TeamAwareFakeDb(FakeDb):
-    def __init__(self, ticket=None, assigned_user=None, team=None, member=None, category=None):
+    def __init__(
+        self,
+        ticket=None,
+        assigned_user=None,
+        team=None,
+        member=None,
+        category=None,
+        category_team=None,
+        dependency=None,
+        dependencies=None,
+        depends_on_ticket=None,
+        missing_depends_on_ticket=False,
+        reverse_dependency=None,
+        open_dependency=None,
+    ):
         super().__init__()
         self.ticket = ticket
         self.assigned_user = assigned_user
         self.team = team
         self.member = member
         self.category = category
+        self.category_team = category_team
+        self.dependency = dependency
+        self.dependencies = dependencies
+        self.depends_on_ticket = depends_on_ticket
+        self.missing_depends_on_ticket = missing_depends_on_ticket
+        self.reverse_dependency = reverse_dependency
+        self.open_dependency = open_dependency
+        self.ticket_query_count = 0
+        self.dependency_id_query_count = 0
 
     def query(self, model):
         model_class = getattr(model, "class_", None)
+        if model is TicketDependency:
+            first_dependency = self.dependencies[0] if self.dependencies else None
+            return FakeQuery(item=first_dependency, items=self.dependencies or [])
+        if model_class is TicketDependency:
+            self.dependency_id_query_count += 1
+            if self.dependency_id_query_count == 1:
+                return FakeQuery(self.open_dependency or self.dependency)
+            if self.dependency_id_query_count == 2:
+                return FakeQuery(self.reverse_dependency)
+            return FakeQuery(None)
+        if model is CategoryTeam or model_class is CategoryTeam:
+            return FakeQuery(self.category_team)
         if model is TicketCategory or model_class is TicketCategory:
             return FakeQuery(self.category)
         if model is Ticket or model_class is Ticket:
+            self.ticket_query_count += 1
+            if self.ticket_query_count == 2 and self.missing_depends_on_ticket:
+                return FakeQuery(None)
+            if self.ticket_query_count == 2 and self.depends_on_ticket is not None:
+                return FakeQuery(self.depends_on_ticket)
             return FakeQuery(self.ticket)
         if model is User or model_class is User:
             return FakeQuery(self.assigned_user)
@@ -411,21 +496,27 @@ def test_assign_ticket_to_team_updates_ticket_team():
     team = SimpleNamespace(id=uuid4())
     ticket = SimpleNamespace(id=uuid4(), assigned_to=None, team_id=None)
     db = TeamAwareFakeDb(ticket=ticket, team=team)
+    current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
 
-    result = assign_ticket_to_team(db, ticket.id, team.id)
+    result = assign_ticket_to_team(db, ticket.id, team.id, current_user)
 
     assert result is ticket
     assert ticket.team_id == team.id
     assert db.committed is True
+    assert isinstance(db.added[0], TicketTeamHistory)
+    assert db.added[0].old_team_id is None
+    assert db.added[0].new_team_id == team.id
+    assert db.added[0].changed_by == current_user.id
 
 
 def test_assign_ticket_to_same_team_raises_error():
     team = SimpleNamespace(id=uuid4())
     ticket = SimpleNamespace(id=uuid4(), assigned_to=None, team_id=team.id)
     db = TeamAwareFakeDb(ticket=ticket, team=team)
+    current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
 
     with pytest.raises(TicketTeamAssignmentError, match="already assigned"):
-        assign_ticket_to_team(db, ticket.id, team.id)
+        assign_ticket_to_team(db, ticket.id, team.id, current_user)
 
 
 def test_assign_ticket_to_team_rejects_assigned_user_outside_target_team():
@@ -433,11 +524,342 @@ def test_assign_ticket_to_team_rejects_assigned_user_outside_target_team():
     team = SimpleNamespace(id=uuid4())
     ticket = SimpleNamespace(id=uuid4(), assigned_to=assigned_user_id, team_id=None)
     db = TeamAwareFakeDb(ticket=ticket, team=team, member=None)
+    current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
 
     with pytest.raises(TicketTeamAssignmentError, match="does not belong"):
-        assign_ticket_to_team(db, ticket.id, team.id)
+        assign_ticket_to_team(db, ticket.id, team.id, current_user)
 
     assert ticket.team_id is None
+    assert db.committed is False
+
+
+def test_team_lead_assigns_unassigned_ticket_to_own_team_when_category_matches():
+    team_id = uuid4()
+    category_id = uuid4()
+    lead_id = uuid4()
+    team = SimpleNamespace(id=team_id, lead_id=lead_id)
+    ticket = SimpleNamespace(id=uuid4(), assigned_to=None, team_id=None, category_id=category_id)
+    category_team = SimpleNamespace(id=uuid4(), category_id=category_id, team_id=team_id)
+    current_user = SimpleNamespace(id=lead_id, role="AGENT")
+    db = TeamAwareFakeDb(ticket=ticket, team=team, category_team=category_team)
+
+    result = assign_ticket_to_team(db, ticket.id, team.id, current_user)
+
+    assert result is ticket
+    assert ticket.team_id == team.id
+    assert db.committed is True
+    assert isinstance(db.added[0], TicketTeamHistory)
+
+
+def test_team_lead_cannot_assign_ticket_if_category_is_not_associated():
+    team_id = uuid4()
+    category_id = uuid4()
+    lead_id = uuid4()
+    team = SimpleNamespace(id=team_id, lead_id=lead_id)
+    ticket = SimpleNamespace(id=uuid4(), assigned_to=None, team_id=None, category_id=category_id)
+    current_user = SimpleNamespace(id=lead_id, role="AGENT")
+    db = TeamAwareFakeDb(ticket=ticket, team=team, category_team=None)
+
+    with pytest.raises(TicketTeamPermissionError, match="category is not associated"):
+        assign_ticket_to_team(db, ticket.id, team.id, current_user)
+
+    assert ticket.team_id is None
+    assert db.committed is False
+
+
+def test_admin_changes_ticket_category_and_clears_team_and_assignee():
+    old_category_id = uuid4()
+    new_category = SimpleNamespace(id=uuid4(), is_active=True)
+    old_team_id = uuid4()
+    old_assigned_to = uuid4()
+    ticket = SimpleNamespace(
+        id=uuid4(),
+        status=TicketStatus.IN_PROGRESS,
+        category_id=old_category_id,
+        team_id=old_team_id,
+        assigned_to=old_assigned_to,
+    )
+    current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
+    db = TeamAwareFakeDb(ticket=ticket, category=new_category)
+
+    result = change_ticket_category(db, ticket.id, new_category.id, current_user, " Categoria incorrecta ")
+
+    assert result is ticket
+    assert ticket.category_id == new_category.id
+    assert ticket.team_id is None
+    assert ticket.assigned_to is None
+    assert db.committed is True
+
+    category_history = db.added[0]
+    assert isinstance(category_history, TicketCategoryHistory)
+    assert category_history.old_category_id == old_category_id
+    assert category_history.new_category_id == new_category.id
+    assert category_history.reason == "Categoria incorrecta"
+    assert category_history.changed_by == current_user.id
+
+    team_history = db.added[1]
+    assert isinstance(team_history, TicketTeamHistory)
+    assert team_history.old_team_id == old_team_id
+    assert team_history.new_team_id is None
+
+    assignment_history = db.added[2]
+    assert isinstance(assignment_history, TicketAssignmentHistory)
+    assert assignment_history.old_assigned_to == old_assigned_to
+    assert assignment_history.new_assigned_to is None
+
+
+def test_change_ticket_category_requires_reason():
+    new_category = SimpleNamespace(id=uuid4(), is_active=True)
+    ticket = SimpleNamespace(
+        id=uuid4(),
+        status=TicketStatus.OPEN,
+        category_id=uuid4(),
+        team_id=None,
+        assigned_to=None,
+    )
+    current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
+    db = TeamAwareFakeDb(ticket=ticket, category=new_category)
+
+    with pytest.raises(MissingCategoryChangeReasonError, match="Reason is required"):
+        change_ticket_category(db, ticket.id, new_category.id, current_user, "   ")
+
+    assert ticket.category_id != new_category.id
+    assert db.added == []
+    assert db.committed is False
+
+
+def test_change_ticket_category_rejects_inactive_category():
+    new_category = SimpleNamespace(id=uuid4(), is_active=False)
+    ticket = SimpleNamespace(
+        id=uuid4(),
+        status=TicketStatus.OPEN,
+        category_id=uuid4(),
+        team_id=None,
+        assigned_to=None,
+    )
+    current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
+    db = TeamAwareFakeDb(ticket=ticket, category=new_category)
+
+    with pytest.raises(InvalidTicketCategoryError, match="Inactive categories"):
+        change_ticket_category(db, ticket.id, new_category.id, current_user, "Correccion")
+
+    assert db.added == []
+    assert db.committed is False
+
+
+def test_change_ticket_category_rejects_same_category():
+    category_id = uuid4()
+    new_category = SimpleNamespace(id=category_id, is_active=True)
+    ticket = SimpleNamespace(
+        id=uuid4(),
+        status=TicketStatus.OPEN,
+        category_id=category_id,
+        team_id=None,
+        assigned_to=None,
+    )
+    current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
+    db = TeamAwareFakeDb(ticket=ticket, category=new_category)
+
+    with pytest.raises(InvalidTicketCategoryChangeError, match="already belongs"):
+        change_ticket_category(db, ticket.id, new_category.id, current_user, "Correccion")
+
+    assert db.added == []
+    assert db.committed is False
+
+
+def test_team_lead_changes_category_for_ticket_in_own_team():
+    team_id = uuid4()
+    lead_id = uuid4()
+    new_category = SimpleNamespace(id=uuid4(), is_active=True)
+    ticket = SimpleNamespace(
+        id=uuid4(),
+        status=TicketStatus.ON_HOLD,
+        category_id=uuid4(),
+        team_id=team_id,
+        assigned_to=None,
+    )
+    current_user = SimpleNamespace(id=lead_id, role="AGENT")
+    team = SimpleNamespace(id=team_id, lead_id=lead_id)
+    db = TeamAwareFakeDb(ticket=ticket, category=new_category, team=team)
+
+    result = change_ticket_category(db, ticket.id, new_category.id, current_user, "No corresponde al team")
+
+    assert result is ticket
+    assert ticket.category_id == new_category.id
+    assert ticket.team_id is None
+    assert db.committed is True
+    assert isinstance(db.added[0], TicketCategoryHistory)
+    assert isinstance(db.added[1], TicketTeamHistory)
+
+
+def test_agent_without_team_lead_permission_cannot_change_category():
+    new_category = SimpleNamespace(id=uuid4(), is_active=True)
+    ticket = SimpleNamespace(
+        id=uuid4(),
+        status=TicketStatus.ON_HOLD,
+        category_id=uuid4(),
+        team_id=uuid4(),
+        assigned_to=None,
+    )
+    current_user = SimpleNamespace(id=uuid4(), role="AGENT")
+    db = TeamAwareFakeDb(ticket=ticket, category=new_category, team=None)
+
+    with pytest.raises(TicketPermissionError, match="Only the current team lead"):
+        change_ticket_category(db, ticket.id, new_category.id, current_user, "No corresponde")
+
+    assert db.added == []
+    assert db.committed is False
+
+
+def test_admin_adds_existing_ticket_dependency():
+    ticket = SimpleNamespace(id=uuid4(), status=TicketStatus.IN_PROGRESS, team_id=None)
+    depends_on_ticket = SimpleNamespace(id=uuid4(), status=TicketStatus.OPEN)
+    current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
+    db = TeamAwareFakeDb(ticket=ticket, depends_on_ticket=depends_on_ticket)
+
+    result = add_ticket_dependency(db, ticket.id, depends_on_ticket.id, current_user, "Necesita revision externa")
+
+    assert isinstance(result, TicketDependency)
+    assert result.ticket_id == ticket.id
+    assert result.depends_on_ticket_id == depends_on_ticket.id
+    assert result.reason == "Necesita revision externa"
+    assert result.created_by == current_user.id
+    assert db.committed is True
+
+
+def test_add_ticket_dependency_rejects_self_dependency():
+    ticket_id = uuid4()
+    ticket = SimpleNamespace(id=ticket_id, status=TicketStatus.IN_PROGRESS, team_id=None)
+    current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
+    db = TeamAwareFakeDb(ticket=ticket, depends_on_ticket=ticket)
+
+    with pytest.raises(TicketDependencyError, match="cannot depend on itself"):
+        add_ticket_dependency(db, ticket.id, ticket.id, current_user)
+
+    assert db.added == []
+    assert db.committed is False
+
+
+def test_add_ticket_dependency_rejects_missing_blocking_ticket():
+    ticket = SimpleNamespace(id=uuid4(), status=TicketStatus.IN_PROGRESS, team_id=None)
+    current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
+    db = TeamAwareFakeDb(ticket=ticket, missing_depends_on_ticket=True)
+
+    with pytest.raises(TicketDependencyNotFoundError, match="Blocking ticket not found"):
+        add_ticket_dependency(db, ticket.id, uuid4(), current_user)
+
+    assert db.added == []
+    assert db.committed is False
+
+
+def test_create_blocking_ticket_creates_ticket_dependency_and_sets_current_ticket_on_hold():
+    category = SimpleNamespace(id=uuid4(), is_active=True)
+    ticket = SimpleNamespace(
+        id=uuid4(),
+        status=TicketStatus.IN_PROGRESS,
+        team_id=None,
+    )
+    blocking_ticket_in = SimpleNamespace(
+        title="Revisar VPN",
+        description="Validar conectividad remota",
+        category_id=category.id,
+        priority=TicketPriority.HIGH,
+        reason="No se puede continuar hasta revisar VPN",
+    )
+    current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
+    db = TeamAwareFakeDb(ticket=ticket, category=category)
+
+    result = create_blocking_ticket(db, ticket.id, blocking_ticket_in, current_user)
+
+    assert result["current_ticket"] is ticket
+    assert ticket.status == TicketStatus.ON_HOLD
+    assert db.flushed is True
+    assert db.committed is True
+
+    blocking_ticket = result["blocking_ticket"]
+    assert isinstance(blocking_ticket, Ticket)
+    assert blocking_ticket.id is not None
+    assert blocking_ticket.status == TicketStatus.OPEN
+    assert blocking_ticket.category_id == category.id
+    assert blocking_ticket.created_by == current_user.id
+
+    dependency = result["dependency"]
+    assert isinstance(dependency, TicketDependency)
+    assert dependency.ticket_id == ticket.id
+    assert dependency.depends_on_ticket_id == blocking_ticket.id
+
+    assert isinstance(db.added[0], Ticket)
+    assert isinstance(db.added[1], TicketDependency)
+    assert isinstance(db.added[2], TicketStatusHistory)
+    assert db.added[2].old_status == TicketStatus.IN_PROGRESS
+    assert db.added[2].new_status == TicketStatus.ON_HOLD
+
+
+def test_change_ticket_status_cannot_resolve_with_open_dependencies():
+    db = TeamAwareFakeDb(open_dependency=SimpleNamespace(id=uuid4()))
+    ticket = SimpleNamespace(id=uuid4(), status=TicketStatus.IN_PROGRESS, assigned_to=None)
+    current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
+
+    with pytest.raises(TicketBlockedByOpenDependenciesError, match="open dependencies"):
+        change_ticket_status(db, ticket, TicketStatus.RESOLVED, current_user)
+
+    assert ticket.status == TicketStatus.IN_PROGRESS
+    assert db.added == []
+    assert db.committed is False
+
+
+def test_admin_removes_ticket_dependency():
+    ticket = SimpleNamespace(id=uuid4(), status=TicketStatus.ON_HOLD, team_id=None)
+    dependency = SimpleNamespace(id=uuid4(), ticket_id=ticket.id, is_active=True)
+    current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
+    db = TeamAwareFakeDb(ticket=ticket, dependencies=[dependency])
+
+    result = remove_ticket_dependency(db, ticket.id, dependency.id, current_user, "Ya no bloquea")
+
+    assert result is dependency
+    assert dependency.is_active is False
+    assert dependency.removed_by == current_user.id
+    assert dependency.removed_at is not None
+    assert dependency.removed_reason == "Ya no bloquea"
+    assert db.deleted == []
+    assert db.committed is True
+
+
+def test_remove_ticket_dependency_rejects_missing_dependency():
+    ticket = SimpleNamespace(id=uuid4(), status=TicketStatus.ON_HOLD, team_id=None)
+    current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
+    db = TeamAwareFakeDb(ticket=ticket, dependencies=[])
+
+    with pytest.raises(TicketDependencyNotFoundError, match="Dependency not found"):
+        remove_ticket_dependency(db, ticket.id, uuid4(), current_user, "No corresponde")
+
+    assert db.deleted == []
+    assert db.committed is False
+
+
+def test_remove_ticket_dependency_requires_reason():
+    ticket = SimpleNamespace(id=uuid4(), status=TicketStatus.ON_HOLD, team_id=None)
+    dependency = SimpleNamespace(id=uuid4(), ticket_id=ticket.id, is_active=True)
+    current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
+    db = TeamAwareFakeDb(ticket=ticket, dependencies=[dependency])
+
+    with pytest.raises(TicketDependencyError, match="Reason is required"):
+        remove_ticket_dependency(db, ticket.id, dependency.id, current_user, "   ")
+
+    assert dependency.is_active is True
+    assert db.committed is False
+
+
+def test_agent_without_team_lead_permission_cannot_remove_dependency():
+    ticket = SimpleNamespace(id=uuid4(), status=TicketStatus.ON_HOLD, team_id=uuid4())
+    dependency = SimpleNamespace(id=uuid4(), ticket_id=ticket.id, is_active=True)
+    current_user = SimpleNamespace(id=uuid4(), role="AGENT")
+    db = TeamAwareFakeDb(ticket=ticket, dependencies=[dependency], team=None)
+
+    with pytest.raises(TicketPermissionError, match="Not enough permissions"):
+        remove_ticket_dependency(db, ticket.id, dependency.id, current_user, "No corresponde")
+
+    assert db.deleted == []
     assert db.committed is False
 
 

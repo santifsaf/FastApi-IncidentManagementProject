@@ -14,17 +14,20 @@ from app.schemas.category import (
     TicketCategoryCreate,
     TicketCategoryRead,
 )
+from app.schemas.ticket import TicketRead
 from app.services.category_service import (
     CategoryAlreadyExistsError,
     CategoryDataConflictError,
     CategoryInactiveError,
     CategoryNotFoundError,
+    CategoryPermissionError,
     CategoryServiceError,
     CategoryTeamAlreadyExistsError,
     CategoryTeamNotFoundError,
     InvalidCategoryNameError,
     add_category_team_service,
     create_category_service,
+    get_category_ticket_queue_service,
 )
 
 router = APIRouter(prefix="/ticket-categories", tags=["ticket-categories"])
@@ -35,6 +38,9 @@ PaginationLimit = Annotated[int, Query(ge=1, le=100)]
 def _category_service_error_to_http(exc: CategoryServiceError) -> HTTPException:
     if isinstance(exc, (CategoryNotFoundError, CategoryTeamNotFoundError)):
         return HTTPException(status_code=404, detail=str(exc))
+
+    if isinstance(exc, CategoryPermissionError):
+        return HTTPException(status_code=403, detail=str(exc))
 
     if isinstance(exc, (CategoryAlreadyExistsError, CategoryTeamAlreadyExistsError, CategoryDataConflictError)):
         return HTTPException(status_code=409, detail=str(exc))
@@ -74,6 +80,22 @@ def get_categories(
         query = query.filter(TicketCategory.is_active.is_(True))
 
     return query.offset(skip).limit(limit).all()
+
+
+@router.get("/{category_id}/ticket-queue", response_model=list[TicketRead])
+def get_category_ticket_queue(
+    category_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+    skip: PaginationSkip = 0,
+    limit: PaginationLimit = 20,
+):
+    try:
+        # Cola manual: tickets de la categoria que todavia no tienen team.
+        # La autoasignacion de team queda para una etapa posterior.
+        return get_category_ticket_queue_service(db, category_id, current_user, skip, limit)
+    except CategoryServiceError as exc:
+        raise _category_service_error_to_http(exc) from exc
 
 
 @router.post("/{category_id}/teams", response_model=CategoryTeamRead, status_code=201)

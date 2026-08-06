@@ -5,7 +5,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.category import CategoryTeam, TicketCategory
-from app.models.team import Team
+from app.models.team import Team, TeamMember
+from app.models.ticket import Ticket, TicketStatus
+from app.models.user import User, UserRole
 from app.schemas.category import TicketCategoryCreate
 
 
@@ -38,6 +40,10 @@ class CategoryDataConflictError(CategoryServiceError):
 
 
 class CategoryTeamNotFoundError(CategoryServiceError):
+    pass
+
+
+class CategoryPermissionError(CategoryServiceError):
     pass
 
 
@@ -112,3 +118,55 @@ def add_category_team_service(db: Session, category_id: UUID, team_id: UUID) -> 
     except Exception:
         db.rollback()
         raise
+
+
+def get_category_ticket_queue_service(
+    db: Session,
+    category_id: UUID,
+    current_user: User,
+    skip: int = 0,
+    limit: int = 20,
+) -> list[Ticket]:
+    """Devuelve tickets pendientes de asignar a team dentro de una categoria.
+
+    Esta cola es operativa: muestra tickets con categoria definida pero todavia
+    sin equipo responsable. La autoasignacion queda para una etapa posterior.
+    """
+
+    category = db.query(TicketCategory).filter(TicketCategory.id == category_id).first()
+    if category is None:
+        raise CategoryNotFoundError("Category not found")
+
+    if current_user.role == UserRole.ADMIN:
+        can_view_queue = True
+    elif current_user.role == UserRole.AGENT:
+        # Un AGENT ve la cola si pertenece a algun team asociado a esta categoria.
+        can_view_queue = (
+            db.query(CategoryTeam.id)
+            .join(TeamMember, TeamMember.team_id == CategoryTeam.team_id)
+            .filter(
+                CategoryTeam.category_id == category.id,
+                TeamMember.user_id == current_user.id,
+            )
+            .first()
+            is not None
+        )
+    else:
+        can_view_queue = False
+
+    if not can_view_queue:
+        raise CategoryPermissionError("Not enough permissions to view category ticket queue")
+
+    return (
+        db.query(Ticket)
+        .filter(
+            Ticket.category_id == category.id,
+            Ticket.team_id.is_(None),
+            Ticket.status != TicketStatus.CLOSED,
+        )
+        # Por ahora priorizamos antiguedad: primero los tickets que mas esperan.
+        .order_by(Ticket.created_at.asc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
