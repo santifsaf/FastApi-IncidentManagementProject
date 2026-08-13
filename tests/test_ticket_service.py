@@ -38,6 +38,7 @@ from app.services.ticket_service import (
     change_ticket_status,
     create_blocking_ticket,
     create_ticket_service,
+    get_blocked_tickets_service,
     remove_ticket_dependency,
 )
 
@@ -133,6 +134,7 @@ class TeamAwareFakeDb(FakeDb):
         missing_depends_on_ticket=False,
         reverse_dependency=None,
         open_dependency=None,
+        blocked_tickets=None,
     ):
         super().__init__()
         self.ticket = ticket
@@ -147,6 +149,7 @@ class TeamAwareFakeDb(FakeDb):
         self.missing_depends_on_ticket = missing_depends_on_ticket
         self.reverse_dependency = reverse_dependency
         self.open_dependency = open_dependency
+        self.blocked_tickets = blocked_tickets
         self.ticket_query_count = 0
         self.dependency_id_query_count = 0
 
@@ -168,6 +171,8 @@ class TeamAwareFakeDb(FakeDb):
             return FakeQuery(self.category)
         if model is Ticket or model_class is Ticket:
             self.ticket_query_count += 1
+            if self.ticket_query_count == 2 and self.blocked_tickets is not None:
+                return FakeQuery(item=None, items=self.blocked_tickets)
             if self.ticket_query_count == 2 and self.missing_depends_on_ticket:
                 return FakeQuery(None)
             if self.ticket_query_count == 2 and self.depends_on_ticket is not None:
@@ -835,6 +840,29 @@ def test_remove_ticket_dependency_rejects_missing_dependency():
 
     assert db.deleted == []
     assert db.committed is False
+
+
+def test_admin_views_tickets_blocked_by_current_ticket():
+    blocking_ticket = SimpleNamespace(id=uuid4(), team_id=None, assigned_to=None, created_by=uuid4())
+    blocked_tickets = [
+        SimpleNamespace(id=uuid4(), status=TicketStatus.IN_PROGRESS),
+        SimpleNamespace(id=uuid4(), status=TicketStatus.ON_HOLD),
+    ]
+    current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
+    db = TeamAwareFakeDb(ticket=blocking_ticket, blocked_tickets=blocked_tickets)
+
+    result = get_blocked_tickets_service(db, blocking_ticket.id, current_user)
+
+    assert result == blocked_tickets
+
+
+def test_user_cannot_view_blocked_tickets():
+    blocking_ticket = SimpleNamespace(id=uuid4(), team_id=None, assigned_to=None, created_by=uuid4())
+    current_user = SimpleNamespace(id=uuid4(), role="USER")
+    db = TeamAwareFakeDb(ticket=blocking_ticket, blocked_tickets=[])
+
+    with pytest.raises(TicketPermissionError, match="Not enough permissions"):
+        get_blocked_tickets_service(db, blocking_ticket.id, current_user)
 
 
 def test_remove_ticket_dependency_requires_reason():

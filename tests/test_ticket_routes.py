@@ -161,3 +161,30 @@ def test_category_history_endpoint_returns_200_for_assigned_agent(monkeypatch):
 
     assert len(result) == 1
     assert result[0].new_category_id == history_item.new_category_id
+
+
+def test_blocked_tickets_endpoint_returns_service_result(monkeypatch):
+    user = SimpleNamespace(id=uuid4(), role=UserRole.AGENT)
+    ticket_id = uuid4()
+    blocked_ticket = SimpleNamespace(
+        id=uuid4(),
+        title="Ticket bloqueado",
+        description="Depende del ticket actual",
+        status="ON_HOLD",
+        priority="MEDIUM",
+        created_by=uuid4(),
+        assigned_to=None,
+        team_id=None,
+        category_id=uuid4(),
+    )
+    fake_session = FakeSession()
+
+    monkeypatch.setattr(
+        tickets_routes,
+        "get_blocked_tickets_service",
+        lambda db, current_ticket_id, current_user: [blocked_ticket],
+    )
+
+    result = tickets_routes.get_blocked_tickets(ticket_id, fake_session, user)
+
+    assert result == [blocked_ticket]

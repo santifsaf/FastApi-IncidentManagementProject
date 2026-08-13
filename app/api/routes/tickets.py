@@ -52,6 +52,7 @@ from app.services.ticket_service import (
     change_ticket_status,
     create_blocking_ticket,
     create_ticket_service,
+    get_blocked_tickets_service,
     get_ticket_dependencies_service,
     get_ticket_category_history_service,
     get_ticket_team_history_service,
@@ -296,6 +297,21 @@ def get_ticket_dependencies(
 ):
     try:
         return get_ticket_dependencies_service(db, ticket_id, current_user)
+    except TicketNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except TicketPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+
+@router.get("/{ticket_id}/blocked-tickets", response_model=list[TicketRead])
+def get_blocked_tickets(
+    ticket_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    try:
+        # Vista inversa de dependencies: tickets que dependen del ticket actual.
+        return get_blocked_tickets_service(db, ticket_id, current_user)
     except TicketNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except TicketPermissionError as exc:

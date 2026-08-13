@@ -493,6 +493,35 @@ def get_ticket_dependencies_service(db: Session, ticket_id: UUID, current_user: 
     )
 
 
+def get_blocked_tickets_service(db: Session, ticket_id: UUID, current_user: User) -> list[Ticket]:
+    """Lista tickets que estan bloqueados por el ticket actual.
+
+    Es la vista inversa de dependencies: si A depende de B, entonces B tiene a
+    A como blocked ticket. Solo devolvemos relaciones activas y tickets aun no
+    resueltos/cerrados porque esos son los que siguen bloqueados operativamente.
+    """
+
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+    if ticket is None:
+        raise TicketNotFoundError("Ticket not found")
+
+    current_user_is_team_member = is_team_member(db, ticket.team_id, current_user.id)
+    if not can_user_view_assignment_history(current_user, ticket, current_user_is_team_member):
+        raise TicketPermissionError("Not enough permissions to view blocked tickets")
+
+    return (
+        db.query(Ticket)
+        .join(TicketDependency, TicketDependency.ticket_id == Ticket.id)
+        .filter(
+            TicketDependency.depends_on_ticket_id == ticket.id,
+            TicketDependency.is_active.is_(True),
+            Ticket.status.notin_([TicketStatus.RESOLVED, TicketStatus.CLOSED]),
+        )
+        .order_by(Ticket.created_at.desc())
+        .all()
+    )
+
+
 def remove_ticket_dependency(
     db: Session,
     ticket_id: UUID,
