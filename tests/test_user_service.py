@@ -1,3 +1,9 @@
+"""Tests del service de usuarios.
+
+Se enfocan en reglas internas: email duplicado, normalizacion y rollback si
+falla la transaccion.
+"""
+
 import pytest
 
 from app.models.user import User

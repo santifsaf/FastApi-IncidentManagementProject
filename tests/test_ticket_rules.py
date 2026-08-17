@@ -1,3 +1,9 @@
+"""Tests de reglas puras de tickets.
+
+Estas funciones no deberian depender de FastAPI ni de SQLAlchemy. Por eso son
+tests baratos, rapidos y faciles de leer.
+"""
+
 import pytest
 
 from app.core.ticket_rules import (

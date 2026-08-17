@@ -1,3 +1,9 @@
+"""Tests del service de categorias.
+
+Cubren creacion, duplicados case-insensitive, asociacion categoria-team y cola
+manual de tickets por categoria.
+"""
+
 from types import SimpleNamespace
 from uuid import uuid4
 

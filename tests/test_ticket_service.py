@@ -1,3 +1,9 @@
+"""Tests del service de tickets.
+
+Este archivo cubre los casos de uso principales: crear tickets, asignar agente
+y team, cambiar estado/categoria, auditar historial y manejar dependencias.
+"""
+
 from types import SimpleNamespace
 from uuid import uuid4
 

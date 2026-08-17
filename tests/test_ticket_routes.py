@@ -1,14 +1,21 @@
+"""Tests HTTP de endpoints de tickets.
+
+Estos tests usan TestClient porque queremos validar la capa API: path real,
+dependencias, status codes, response_model y serializacion JSON. La logica fina
+del negocio queda cubierta en test_ticket_service.py y test_ticket_rules.py.
+"""
+
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
-import pytest
-from fastapi import HTTPException
-
-from app.api.routes import tickets as tickets_routes
+from app.models.ticket import TicketPriority, TicketStatus
 from app.models.user import UserRole
 
 
 class FakeQuery:
+    """Query minima para endpoints que solo filtran, ordenan y paginan."""
+
     def __init__(self, items):
         self.items = items
 
@@ -34,6 +41,12 @@ class FakeQuery:
 
 
 class FakeSession:
+    """Sesion fake para tests HTTP livianos.
+
+    No reemplaza los tests con base real. Sirve para que TestClient pueda pasar
+    por FastAPI sin conectar a PostgreSQL en cada caso de endpoint.
+    """
+
     def __init__(self, ticket=None, tickets=None, history=None):
         self.tickets = tickets if tickets is not None else ([ticket] if ticket else [])
         self.history = history or []
@@ -51,133 +64,193 @@ class FakeSession:
         raise AssertionError(f"Unexpected model queried: {model}")
 
 
-def test_created_by_me_endpoint_returns_created_tickets():
-    user = SimpleNamespace(id=uuid4(), role=UserRole.USER)
-    ticket = SimpleNamespace(id=uuid4(), created_by=user.id, assigned_to=None, team_id=None)
-    fake_session = FakeSession(ticket=ticket)
+def make_ticket(**overrides):
+    """Crea un ticket completo para que TicketRead pueda serializarlo."""
 
-    result = tickets_routes.get_tickets_created_by_me(fake_session, user)
-
-    assert result == [ticket]
-
-
-def test_assigned_to_me_endpoint_returns_assigned_tickets():
-    user = SimpleNamespace(id=uuid4(), role=UserRole.AGENT)
-    ticket = SimpleNamespace(id=uuid4(), created_by=uuid4(), assigned_to=user.id, team_id=None)
-    fake_session = FakeSession(ticket=ticket)
-
-    result = tickets_routes.get_tickets_assigned_to_me(fake_session, user)
-
-    assert result == [ticket]
+    data = {
+        "id": uuid4(),
+        "title": "Error en login",
+        "description": "No puedo ingresar al sistema",
+        "status": TicketStatus.OPEN,
+        "priority": TicketPriority.MEDIUM,
+        "created_by": uuid4(),
+        "assigned_to": None,
+        "team_id": None,
+        "category_id": uuid4(),
+    }
+    data.update(overrides)
+    return SimpleNamespace(**data)
 
 
-def test_get_all_tickets_endpoint_applies_pagination():
-    admin = SimpleNamespace(id=uuid4(), role=UserRole.ADMIN)
-    tickets = [
-        SimpleNamespace(id=uuid4(), team_id=None),
-        SimpleNamespace(id=uuid4(), team_id=None),
-        SimpleNamespace(id=uuid4(), team_id=None),
-    ]
-    fake_session = FakeSession(tickets=tickets)
+def test_created_by_me_endpoint_returns_created_tickets(client, override_current_user, override_db):
+    user = SimpleNamespace(id=uuid4(), role=UserRole.USER, is_active=True)
+    ticket = make_ticket(created_by=user.id)
 
-    result = tickets_routes.get_all_tickets(fake_session, admin, skip=1, limit=1)
+    override_current_user(user)
+    override_db(FakeSession(ticket=ticket))
 
-    assert result == [tickets[1]]
+    response = client.get("/tickets/created-by-me")
 
-
-def test_status_history_endpoint_returns_403_for_unauthorized_user(monkeypatch):
-    user = SimpleNamespace(id=uuid4(), role=UserRole.USER)
-    ticket = SimpleNamespace(id=uuid4(), created_by=uuid4(), assigned_to=None, team_id=None)
-    fake_session = FakeSession(ticket=ticket, history=[])
-
-    monkeypatch.setattr(tickets_routes, "get_db", lambda: fake_session)
-    monkeypatch.setattr(tickets_routes, "get_current_active_user", lambda: user)
-
-    with pytest.raises(HTTPException) as exc_info:
-        tickets_routes.get_ticket_status_history(ticket.id, fake_session, user)
-
-    assert exc_info.value.status_code == 403
+    assert response.status_code == 200
+    assert response.json()[0]["id"] == str(ticket.id)
+    assert response.json()[0]["created_by"] == str(user.id)
 
 
-def test_assignment_history_endpoint_returns_200_for_assigned_agent(monkeypatch):
-    user = SimpleNamespace(id=uuid4(), role=UserRole.AGENT)
-    ticket = SimpleNamespace(id=uuid4(), created_by=uuid4(), assigned_to=user.id, team_id=None)
+def test_assigned_to_me_endpoint_returns_assigned_tickets(client, override_current_user, override_db):
+    user = SimpleNamespace(id=uuid4(), role=UserRole.AGENT, is_active=True)
+    ticket = make_ticket(assigned_to=user.id)
+
+    override_current_user(user)
+    override_db(FakeSession(ticket=ticket))
+
+    response = client.get("/tickets/assigned-to-me")
+
+    assert response.status_code == 200
+    assert response.json()[0]["assigned_to"] == str(user.id)
+
+
+def test_assigned_to_me_endpoint_rejects_user_role(client, override_current_user, override_db):
+    user = SimpleNamespace(id=uuid4(), role=UserRole.USER, is_active=True)
+
+    override_current_user(user)
+    override_db(FakeSession())
+
+    response = client.get("/tickets/assigned-to-me")
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Not enough permissions"
+
+
+def test_get_all_tickets_endpoint_applies_pagination(client, override_current_user, override_db):
+    admin = SimpleNamespace(id=uuid4(), role=UserRole.ADMIN, is_active=True)
+    tickets = [make_ticket(), make_ticket(), make_ticket()]
+
+    override_current_user(admin)
+    override_db(FakeSession(tickets=tickets))
+
+    response = client.get("/tickets/?skip=1&limit=1")
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()] == [str(tickets[1].id)]
+
+
+def test_status_history_endpoint_returns_403_for_unauthorized_user(client, override_current_user, override_db):
+    user = SimpleNamespace(id=uuid4(), role=UserRole.USER, is_active=True)
+    ticket = make_ticket(created_by=uuid4(), assigned_to=None, team_id=None)
+
+    override_current_user(user)
+    override_db(FakeSession(ticket=ticket, history=[]))
+
+    response = client.get(f"/tickets/{ticket.id}/status-history")
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Not enough permissions to view ticket status history"
+
+
+def test_assignment_history_endpoint_returns_200_for_assigned_agent(client, override_current_user, override_db):
+    user = SimpleNamespace(id=uuid4(), role=UserRole.AGENT, is_active=True)
+    ticket = make_ticket(assigned_to=user.id)
     history_item = SimpleNamespace(
         ticket_id=ticket.id,
         old_assigned_to=None,
         new_assigned_to=user.id,
         changed_by=user.id,
-        changed_at="2024-01-01T00:00:00",
+        changed_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
     )
-    fake_session = FakeSession(ticket=ticket, history=[history_item])
 
-    monkeypatch.setattr(tickets_routes, "get_db", lambda: fake_session)
-    monkeypatch.setattr(tickets_routes, "get_current_active_user", lambda: user)
+    override_current_user(user)
+    override_db(FakeSession(ticket=ticket, history=[history_item]))
 
-    result = tickets_routes.get_ticket_assignment_history(ticket.id, fake_session, user)
+    response = client.get(f"/tickets/{ticket.id}/assignment-history")
 
-    assert len(result) == 1
-    assert result[0].new_assigned_to == user.id
+    assert response.status_code == 200
+    assert response.json()[0]["new_assigned_to"] == str(user.id)
 
 
-def test_team_history_endpoint_returns_200_for_assigned_agent(monkeypatch):
-    user = SimpleNamespace(id=uuid4(), role=UserRole.AGENT)
-    ticket = SimpleNamespace(id=uuid4(), created_by=uuid4(), assigned_to=user.id, team_id=None)
+def test_team_history_endpoint_returns_service_result(
+    client,
+    monkeypatch,
+    override_current_user,
+    override_db,
+):
+    user = SimpleNamespace(id=uuid4(), role=UserRole.AGENT, is_active=True)
+    ticket_id = uuid4()
     history_item = SimpleNamespace(
-        ticket_id=ticket.id,
         old_team_id=None,
         new_team_id=uuid4(),
         changed_by=user.id,
-        changed_at="2024-01-01T00:00:00",
+        changed_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
     )
-    fake_session = FakeSession(ticket=ticket, history=[history_item])
 
-    monkeypatch.setattr(tickets_routes, "get_db", lambda: fake_session)
-    monkeypatch.setattr(tickets_routes, "get_current_active_user", lambda: user)
+    override_current_user(user)
+    override_db()
 
-    result = tickets_routes.get_ticket_team_history(ticket.id, fake_session, user)
+    from app.api.routes import tickets as tickets_routes
 
-    assert len(result) == 1
-    assert result[0].new_team_id == history_item.new_team_id
+    monkeypatch.setattr(
+        tickets_routes,
+        "get_ticket_team_history_service",
+        lambda db, current_ticket_id, current_user: [history_item],
+    )
+
+    response = client.get(f"/tickets/{ticket_id}/team-history")
+
+    assert response.status_code == 200
+    assert response.json()[0]["new_team_id"] == str(history_item.new_team_id)
 
 
-def test_category_history_endpoint_returns_200_for_assigned_agent(monkeypatch):
-    user = SimpleNamespace(id=uuid4(), role=UserRole.AGENT)
-    ticket = SimpleNamespace(id=uuid4(), created_by=uuid4(), assigned_to=user.id, team_id=None)
+def test_category_history_endpoint_returns_service_result(
+    client,
+    monkeypatch,
+    override_current_user,
+    override_db,
+):
+    user = SimpleNamespace(id=uuid4(), role=UserRole.AGENT, is_active=True)
+    ticket_id = uuid4()
     history_item = SimpleNamespace(
-        ticket_id=ticket.id,
         old_category_id=uuid4(),
         new_category_id=uuid4(),
         reason="Categoria incorrecta",
         changed_by=user.id,
-        changed_at="2024-01-01T00:00:00",
+        changed_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
     )
-    fake_session = FakeSession(ticket=ticket, history=[history_item])
 
-    monkeypatch.setattr(tickets_routes, "get_db", lambda: fake_session)
-    monkeypatch.setattr(tickets_routes, "get_current_active_user", lambda: user)
+    override_current_user(user)
+    override_db()
 
-    result = tickets_routes.get_ticket_category_history(ticket.id, fake_session, user)
+    from app.api.routes import tickets as tickets_routes
 
-    assert len(result) == 1
-    assert result[0].new_category_id == history_item.new_category_id
+    monkeypatch.setattr(
+        tickets_routes,
+        "get_ticket_category_history_service",
+        lambda db, current_ticket_id, current_user: [history_item],
+    )
+
+    response = client.get(f"/tickets/{ticket_id}/category-history")
+
+    assert response.status_code == 200
+    assert response.json()[0]["new_category_id"] == str(history_item.new_category_id)
 
 
-def test_blocked_tickets_endpoint_returns_service_result(monkeypatch):
-    user = SimpleNamespace(id=uuid4(), role=UserRole.AGENT)
+def test_blocked_tickets_endpoint_returns_service_result(
+    client,
+    monkeypatch,
+    override_current_user,
+    override_db,
+):
+    user = SimpleNamespace(id=uuid4(), role=UserRole.AGENT, is_active=True)
     ticket_id = uuid4()
-    blocked_ticket = SimpleNamespace(
-        id=uuid4(),
+    blocked_ticket = make_ticket(
         title="Ticket bloqueado",
         description="Depende del ticket actual",
-        status="ON_HOLD",
-        priority="MEDIUM",
-        created_by=uuid4(),
-        assigned_to=None,
-        team_id=None,
-        category_id=uuid4(),
+        status=TicketStatus.ON_HOLD,
     )
-    fake_session = FakeSession()
+
+    override_current_user(user)
+    override_db()
+
+    # Este endpoint delega casi todo en el service; aca solo validamos wiring HTTP.
+    from app.api.routes import tickets as tickets_routes
 
     monkeypatch.setattr(
         tickets_routes,
@@ -185,6 +258,7 @@ def test_blocked_tickets_endpoint_returns_service_result(monkeypatch):
         lambda db, current_ticket_id, current_user: [blocked_ticket],
     )
 
-    result = tickets_routes.get_blocked_tickets(ticket_id, fake_session, user)
+    response = client.get(f"/tickets/{ticket_id}/blocked-tickets")
 
-    assert result == [blocked_ticket]
+    assert response.status_code == 200
+    assert response.json()[0]["id"] == str(blocked_ticket.id)

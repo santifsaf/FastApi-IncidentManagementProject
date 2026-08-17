@@ -1,3 +1,10 @@
+"""Tests de autenticacion y JWT.
+
+Cubren login, usuarios inactivos, normalizacion de email y claims obligatorios
+del access token. No prueban rutas protegidas completas; eso queda para tests
+HTTP con TestClient.
+"""
+
 from types import SimpleNamespace
 
 import jwt

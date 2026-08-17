@@ -1,3 +1,9 @@
+"""Tests del service de teams.
+
+Cubren creacion de equipos, leads multiples, membresias y la regla de negocio
+que impide dejar un team sin leads.
+"""
+
 from types import SimpleNamespace
 from uuid import uuid4
 

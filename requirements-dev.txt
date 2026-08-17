@@ -1,0 +1,6 @@
+# Instala primero las dependencias necesarias para correr la app.
+-r requirements.txt
+
+# Tests unitarios y de endpoints.
+pytest==9.0.3
+httpx==0.28.1

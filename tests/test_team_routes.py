@@ -1,0 +1,141 @@
+"""Tests HTTP de endpoints de teams.
+
+Estos casos no repiten toda la logica de team_service.py. Se enfocan en que
+FastAPI resuelva dependencias, permisos, status codes y response_model.
+"""
+
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from uuid import uuid4
+
+from app.models.user import UserRole
+from app.services.team_service import TeamLeadRemovalError
+
+
+def make_team(**overrides):
+    data = {
+        "id": uuid4(),
+        "name": "Soporte",
+        "created_at": datetime(2024, 1, 1, tzinfo=timezone.utc),
+    }
+    data.update(overrides)
+    return SimpleNamespace(**data)
+
+
+def make_team_lead(**overrides):
+    data = {
+        "id": uuid4(),
+        "team_id": uuid4(),
+        "user_id": uuid4(),
+        "created_at": datetime(2024, 1, 1, tzinfo=timezone.utc),
+    }
+    data.update(overrides)
+    return SimpleNamespace(**data)
+
+
+def test_admin_can_create_team(client, monkeypatch, override_current_user, override_db):
+    admin = SimpleNamespace(id=uuid4(), role=UserRole.ADMIN, is_active=True)
+    lead_id = uuid4()
+    created_team = make_team(name="Soporte Nivel 1")
+
+    override_current_user(admin)
+    override_db()
+
+    from app.api.routes import teams as teams_routes
+
+    monkeypatch.setattr(teams_routes, "create_team_service", lambda db, team_in: created_team)
+
+    response = client.post(
+        "/teams/",
+        json={
+            "name": "Soporte Nivel 1",
+            "lead_id": str(lead_id),
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["name"] == "Soporte Nivel 1"
+    assert "lead_id" not in response.json()
+
+
+def test_user_cannot_create_team(client, override_current_user, override_db):
+    user = SimpleNamespace(id=uuid4(), role=UserRole.USER, is_active=True)
+
+    override_current_user(user)
+    override_db()
+
+    response = client.post(
+        "/teams/",
+        json={
+            "name": "Soporte Nivel 1",
+            "lead_id": str(uuid4()),
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Not enough permissions"
+
+
+def test_admin_can_list_team_leads(client, monkeypatch, override_current_user, override_db):
+    admin = SimpleNamespace(id=uuid4(), role=UserRole.ADMIN, is_active=True)
+    team_id = uuid4()
+    leads = [
+        make_team_lead(team_id=team_id),
+        make_team_lead(team_id=team_id),
+    ]
+
+    override_current_user(admin)
+    override_db()
+
+    from app.api.routes import teams as teams_routes
+
+    monkeypatch.setattr(teams_routes, "get_team_leads_service", lambda db, current_team_id: leads)
+
+    response = client.get(f"/teams/{team_id}/leads")
+
+    assert response.status_code == 200
+    assert len(response.json()) == 2
+    assert response.json()[0]["team_id"] == str(team_id)
+
+
+def test_admin_can_add_team_lead(client, monkeypatch, override_current_user, override_db):
+    admin = SimpleNamespace(id=uuid4(), role=UserRole.ADMIN, is_active=True)
+    team_id = uuid4()
+    user_id = uuid4()
+    created_lead = make_team_lead(team_id=team_id, user_id=user_id)
+
+    override_current_user(admin)
+    override_db()
+
+    from app.api.routes import teams as teams_routes
+
+    monkeypatch.setattr(teams_routes, "add_team_lead_service", lambda db, current_team_id, current_user_id: created_lead)
+
+    response = client.post(
+        f"/teams/{team_id}/leads",
+        json={"user_id": str(user_id)},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["user_id"] == str(user_id)
+
+
+def test_remove_last_team_lead_returns_400(client, monkeypatch, override_current_user, override_db):
+    admin = SimpleNamespace(id=uuid4(), role=UserRole.ADMIN, is_active=True)
+    team_id = uuid4()
+    user_id = uuid4()
+
+    override_current_user(admin)
+    override_db()
+
+    from app.api.routes import teams as teams_routes
+
+    def fake_remove_team_lead(db, current_team_id, current_user_id):
+        raise TeamLeadRemovalError("Team must have at least one lead")
+
+    monkeypatch.setattr(teams_routes, "remove_team_lead_service", fake_remove_team_lead)
+
+    response = client.delete(f"/teams/{team_id}/leads/{user_id}")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Team must have at least one lead"

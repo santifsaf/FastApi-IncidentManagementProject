@@ -1,3 +1,9 @@
+"""Tests de consultas reutilizables de teams.
+
+Estas funciones expresan permisos derivados de TeamLead y TeamMember. Se prueban
+separadas porque services de tickets y teams dependen de ellas.
+"""
+
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -38,6 +44,12 @@ def test_is_team_lead_accepts_registered_team_lead():
     )
 
     assert is_team_lead(db, team_id, user_id) is True
+
+
+def test_is_team_lead_returns_false_without_registered_team_lead():
+    db = FakeDb(team_lead=None)
+
+    assert is_team_lead(db, uuid4(), uuid4()) is False
 
 
 def test_is_team_member_returns_false_without_team():
