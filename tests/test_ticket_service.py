@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 
 from app.models.category import CategoryTeam, TicketCategory
-from app.models.team import Team, TeamMember
+from app.models.team import Team, TeamLead, TeamMember
 from app.models.ticket import (
     Ticket,
     TicketAssignmentHistory,
@@ -113,6 +113,8 @@ class FakeQuery:
         return self
 
     def first(self):
+        if isinstance(self.item, list):
+            return self.item[0] if self.item else None
         return self.item
 
     def all(self):
@@ -128,6 +130,7 @@ class TeamAwareFakeDb(FakeDb):
         member=None,
         category=None,
         category_team=None,
+        team_lead=None,
         dependency=None,
         dependencies=None,
         depends_on_ticket=None,
@@ -143,6 +146,7 @@ class TeamAwareFakeDb(FakeDb):
         self.member = member
         self.category = category
         self.category_team = category_team
+        self.team_lead = team_lead
         self.dependency = dependency
         self.dependencies = dependencies
         self.depends_on_ticket = depends_on_ticket
@@ -182,6 +186,8 @@ class TeamAwareFakeDb(FakeDb):
             return FakeQuery(self.assigned_user)
         if model is Team or model_class is Team:
             return FakeQuery(self.team)
+        if model is TeamLead or model_class is TeamLead:
+            return FakeQuery(self.team_lead)
         if model is TeamMember or model_class is TeamMember:
             return FakeQuery(self.member)
         raise AssertionError(f"Unexpected model queried: {model}")
@@ -482,7 +488,8 @@ def test_team_lead_assigns_ticket_to_team_member():
     db = TeamAwareFakeDb(
         ticket=SimpleNamespace(id=uuid4(), assigned_to=None, team_id=team_id),
         assigned_user=SimpleNamespace(id=assigned_user_id, role="AGENT", is_active=True),
-        team=SimpleNamespace(id=team_id, lead_id=lead_id),
+        team=SimpleNamespace(id=team_id),
+        team_lead=SimpleNamespace(id=uuid4(), team_id=team_id, user_id=lead_id),
         member=SimpleNamespace(team_id=team_id, user_id=assigned_user_id),
     )
     ticket = db.ticket
@@ -542,11 +549,12 @@ def test_team_lead_assigns_unassigned_ticket_to_own_team_when_category_matches()
     team_id = uuid4()
     category_id = uuid4()
     lead_id = uuid4()
-    team = SimpleNamespace(id=team_id, lead_id=lead_id)
+    team = SimpleNamespace(id=team_id)
     ticket = SimpleNamespace(id=uuid4(), assigned_to=None, team_id=None, category_id=category_id)
     category_team = SimpleNamespace(id=uuid4(), category_id=category_id, team_id=team_id)
     current_user = SimpleNamespace(id=lead_id, role="AGENT")
-    db = TeamAwareFakeDb(ticket=ticket, team=team, category_team=category_team)
+    team_lead = SimpleNamespace(id=uuid4(), team_id=team_id, user_id=lead_id)
+    db = TeamAwareFakeDb(ticket=ticket, team=team, category_team=category_team, team_lead=team_lead)
 
     result = assign_ticket_to_team(db, ticket.id, team.id, current_user)
 
@@ -560,10 +568,11 @@ def test_team_lead_cannot_assign_ticket_if_category_is_not_associated():
     team_id = uuid4()
     category_id = uuid4()
     lead_id = uuid4()
-    team = SimpleNamespace(id=team_id, lead_id=lead_id)
+    team = SimpleNamespace(id=team_id)
     ticket = SimpleNamespace(id=uuid4(), assigned_to=None, team_id=None, category_id=category_id)
     current_user = SimpleNamespace(id=lead_id, role="AGENT")
-    db = TeamAwareFakeDb(ticket=ticket, team=team, category_team=None)
+    team_lead = SimpleNamespace(id=uuid4(), team_id=team_id, user_id=lead_id)
+    db = TeamAwareFakeDb(ticket=ticket, team=team, category_team=None, team_lead=team_lead)
 
     with pytest.raises(TicketTeamPermissionError, match="category is not associated"):
         assign_ticket_to_team(db, ticket.id, team.id, current_user)
@@ -684,8 +693,9 @@ def test_team_lead_changes_category_for_ticket_in_own_team():
         assigned_to=None,
     )
     current_user = SimpleNamespace(id=lead_id, role="AGENT")
-    team = SimpleNamespace(id=team_id, lead_id=lead_id)
-    db = TeamAwareFakeDb(ticket=ticket, category=new_category, team=team)
+    team = SimpleNamespace(id=team_id)
+    team_lead = SimpleNamespace(id=uuid4(), team_id=team_id, user_id=lead_id)
+    db = TeamAwareFakeDb(ticket=ticket, category=new_category, team=team, team_lead=team_lead)
 
     result = change_ticket_category(db, ticket.id, new_category.id, current_user, "No corresponde al team")
 

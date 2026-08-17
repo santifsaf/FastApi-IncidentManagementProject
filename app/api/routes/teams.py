@@ -10,7 +10,7 @@ from app.db.session import get_db
 from app.models.team import Team, TeamMember
 from app.models.ticket import Ticket
 from app.models.user import User, UserRole
-from app.schemas.team import TeamCreate, TeamMemberCreate, TeamMemberRead, TeamRead
+from app.schemas.team import TeamCreate, TeamLeadCreate, TeamLeadRead, TeamMemberCreate, TeamMemberRead, TeamRead
 from app.schemas.ticket import TicketRead
 from app.services.team_service import (
     InvalidTeamLeadError,
@@ -21,12 +21,16 @@ from app.services.team_service import (
     TeamDataConflictError,
     TeamLeadNotFoundError,
     TeamLeadRemovalError,
+    TeamLeadAlreadyExistsError,
     TeamMemberAlreadyExistsError,
     TeamMemberNotFoundError,
     TeamNotFoundError,
     UserNotFoundError,
+    add_team_lead_service,
     add_team_member_service,
     create_team_service,
+    get_team_leads_service,
+    remove_team_lead_service,
     remove_team_member_service,
 )
 from app.services.team_queries import is_team_member
@@ -40,7 +44,7 @@ def _team_service_error_to_http(exc: TeamServiceError) -> HTTPException:
     if isinstance(exc, (TeamNotFoundError, TeamLeadNotFoundError, UserNotFoundError, TeamMemberNotFoundError)):
         return HTTPException(status_code=404, detail=str(exc))
 
-    if isinstance(exc, (TeamAlreadyExistsError, TeamMemberAlreadyExistsError, TeamDataConflictError)):
+    if isinstance(exc, (TeamAlreadyExistsError, TeamMemberAlreadyExistsError, TeamLeadAlreadyExistsError, TeamDataConflictError)):
         return HTTPException(status_code=409, detail=str(exc))
 
     if isinstance(exc, (InvalidTeamNameError, InvalidTeamLeadError, InvalidTeamMemberError, TeamLeadRemovalError)):
@@ -109,6 +113,47 @@ def add_team_member(
     try:
         # El service valida que el team exista, que el usuario exista y que sea AGENT activo.
         return add_team_member_service(db, team_id, member_in.user_id)
+    except TeamServiceError as exc:
+        raise _team_service_error_to_http(exc) from exc
+
+
+@router.get("/{team_id}/leads", response_model=list[TeamLeadRead])
+def get_team_leads(
+    team_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("ADMIN")),
+):
+    try:
+        # TeamLead es la fuente de verdad para saber quienes lideran el equipo.
+        return get_team_leads_service(db, team_id)
+    except TeamServiceError as exc:
+        raise _team_service_error_to_http(exc) from exc
+
+
+@router.post("/{team_id}/leads", response_model=TeamLeadRead, status_code=201)
+def add_team_lead(
+    team_id: UUID,
+    lead_in: TeamLeadCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("ADMIN")),
+):
+    try:
+        # Agregar un lead tambien lo agrega como miembro si todavia no pertenecia al team.
+        return add_team_lead_service(db, team_id, lead_in.user_id)
+    except TeamServiceError as exc:
+        raise _team_service_error_to_http(exc) from exc
+
+
+@router.delete("/{team_id}/leads/{user_id}", status_code=204)
+def remove_team_lead(
+    team_id: UUID,
+    user_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("ADMIN")),
+):
+    try:
+        # El service impide dejar un equipo sin ningun lead.
+        remove_team_lead_service(db, team_id, user_id)
     except TeamServiceError as exc:
         raise _team_service_error_to_http(exc) from exc
 

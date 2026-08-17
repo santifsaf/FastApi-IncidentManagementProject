@@ -14,7 +14,6 @@ class TeamRead(BaseModel):
 
     id: UUID
     name: str
-    lead_id: UUID
     created_at: datetime
 
 
@@ -23,6 +22,19 @@ class TeamMemberCreate(BaseModel):
 
 
 class TeamMemberRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    team_id: UUID
+    user_id: UUID
+    created_at: datetime
+
+
+class TeamLeadCreate(BaseModel):
+    user_id: UUID
+
+
+class TeamLeadRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID

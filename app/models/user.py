@@ -39,14 +39,14 @@ class User(Base):
         back_populates="assigned_user",
     )
 
-    led_teams = relationship(
-        "Team",
-        foreign_keys="Team.lead_id",
-        back_populates="lead",
-    )
-
     team_memberships = relationship(
         "TeamMember",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
+    team_lead_assignments = relationship(
+        "TeamLead",
         back_populates="user",
         cascade="all, delete-orphan",
     )
