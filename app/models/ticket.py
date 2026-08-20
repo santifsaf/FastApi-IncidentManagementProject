@@ -37,6 +37,13 @@ class Ticket(Base):
     assigned_to = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     team_id = Column(UUID(as_uuid=True), ForeignKey("teams.id"), nullable=True)
     category_id = Column(UUID(as_uuid=True), ForeignKey("ticket_categories.id"), nullable=False)
+    closed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Archivado administrativo: no cambia el status, solo oculta el ticket de
+    # listados operativos normales sin perderlo de la base.
+    archived_at = Column(DateTime(timezone=True), nullable=True)
+    archived_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    archive_reason = Column(Text, nullable=True)
 
     creator = relationship(
         "User",

@@ -163,6 +163,7 @@ def get_category_ticket_queue_service(
             Ticket.category_id == category.id,
             Ticket.team_id.is_(None),
             Ticket.status != TicketStatus.CLOSED,
+            Ticket.archived_at.is_(None),
         )
         # Por ahora priorizamos antiguedad: primero los tickets que mas esperan.
         .order_by(Ticket.created_at.asc())

@@ -26,6 +26,10 @@ class TicketRead(BaseModel):
     assigned_to: Optional[UUID] = None
     team_id: Optional[UUID] = None
     category_id: UUID
+    closed_at: Optional[datetime] = None
+    archived_at: Optional[datetime] = None
+    archived_by: Optional[UUID] = None
+    archive_reason: Optional[str] = None
 
 
 #SCHEMAS DEL ESTADO DEL TICKET
@@ -63,6 +67,10 @@ class TicketDependencyCreate(BaseModel):
 
 
 class TicketDependencyRemove(BaseModel):
+    reason: str
+
+
+class TicketArchiveUpdate(BaseModel):
     reason: str
 
 

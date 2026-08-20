@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from app.models.ticket import TicketPriority, TicketStatus
 from app.models.user import UserRole
+from app.services.ticket_service import TicketArchiveError
 
 
 class FakeQuery:
@@ -77,6 +78,10 @@ def make_ticket(**overrides):
         "assigned_to": None,
         "team_id": None,
         "category_id": uuid4(),
+        "closed_at": None,
+        "archived_at": None,
+        "archived_by": None,
+        "archive_reason": None,
     }
     data.update(overrides)
     return SimpleNamespace(**data)
@@ -262,3 +267,94 @@ def test_blocked_tickets_endpoint_returns_service_result(
 
     assert response.status_code == 200
     assert response.json()[0]["id"] == str(blocked_ticket.id)
+
+
+def test_archive_ticket_endpoint_returns_archived_ticket(
+    client,
+    monkeypatch,
+    override_current_user,
+    override_db,
+):
+    admin = SimpleNamespace(id=uuid4(), role=UserRole.ADMIN, is_active=True)
+    ticket = make_ticket(
+        status=TicketStatus.CLOSED,
+        archived_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        archived_by=admin.id,
+        archive_reason="Limpieza operativa",
+    )
+
+    override_current_user(admin)
+    override_db()
+
+    from app.api.routes import tickets as tickets_routes
+
+    monkeypatch.setattr(
+        tickets_routes,
+        "archive_ticket",
+        lambda db, ticket_id, current_user, reason: ticket,
+    )
+
+    response = client.patch(
+        f"/tickets/{ticket.id}/archive",
+        json={"reason": "Limpieza operativa"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["archived_by"] == str(admin.id)
+    assert response.json()["archive_reason"] == "Limpieza operativa"
+
+
+def test_archive_ticket_endpoint_maps_business_error_to_400(
+    client,
+    monkeypatch,
+    override_current_user,
+    override_db,
+):
+    admin = SimpleNamespace(id=uuid4(), role=UserRole.ADMIN, is_active=True)
+    ticket_id = uuid4()
+
+    override_current_user(admin)
+    override_db()
+
+    from app.api.routes import tickets as tickets_routes
+
+    def fake_archive_ticket(db, current_ticket_id, current_user, reason):
+        raise TicketArchiveError("Only closed tickets can be archived")
+
+    monkeypatch.setattr(tickets_routes, "archive_ticket", fake_archive_ticket)
+
+    response = client.patch(
+        f"/tickets/{ticket_id}/archive",
+        json={"reason": "Limpieza operativa"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Only closed tickets can be archived"
+
+
+def test_unarchive_ticket_endpoint_returns_visible_ticket(
+    client,
+    monkeypatch,
+    override_current_user,
+    override_db,
+):
+    admin = SimpleNamespace(id=uuid4(), role=UserRole.ADMIN, is_active=True)
+    ticket = make_ticket(status=TicketStatus.CLOSED)
+
+    override_current_user(admin)
+    override_db()
+
+    from app.api.routes import tickets as tickets_routes
+
+    monkeypatch.setattr(
+        tickets_routes,
+        "unarchive_ticket",
+        lambda db, ticket_id, current_user: ticket,
+    )
+
+    response = client.patch(f"/tickets/{ticket.id}/unarchive")
+
+    assert response.status_code == 200
+    assert response.json()["archived_at"] is None
+    assert response.json()["archived_by"] is None
+    assert response.json()["archive_reason"] is None

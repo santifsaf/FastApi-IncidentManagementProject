@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy import func
@@ -96,6 +97,10 @@ class TicketDependencyNotFoundError(TicketServiceError):
 
 
 class TicketBlockedByOpenDependenciesError(TicketServiceError):
+    pass
+
+
+class TicketArchiveError(TicketServiceError):
     pass
 
 
@@ -256,6 +261,8 @@ def change_ticket_status(db: Session, ticket: Ticket, new_status: TicketStatus, 
 
     old_status = ticket.status
     ticket.status = new_status
+    if new_status == TicketStatus.CLOSED:
+        ticket.closed_at = func.now()
 
     db.add(
         TicketStatusHistory(
@@ -268,6 +275,93 @@ def change_ticket_status(db: Session, ticket: Ticket, new_status: TicketStatus, 
     )
 
     return _commit_and_refresh(db, ticket)
+
+
+def archive_ticket(db: Session, ticket_id: UUID, current_user: User, reason: str | None) -> Ticket:
+    """Archiva un ticket cerrado sin cambiar su status.
+
+    Archivar es una accion administrativa de visibilidad: el ticket deja de
+    aparecer en listados normales, pero sigue existiendo para consulta puntual.
+    """
+
+    if current_user.role != UserRole.ADMIN:
+        raise TicketPermissionError("Only admins can archive tickets")
+
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+    if ticket is None:
+        raise TicketNotFoundError("Ticket not found")
+
+    if ticket.archived_at is not None:
+        raise TicketArchiveError("Ticket already archived")
+
+    if ticket.status != TicketStatus.CLOSED:
+        raise TicketArchiveError("Only closed tickets can be archived")
+
+    normalized_reason = _normalize_optional_reason(reason)
+    if not normalized_reason:
+        raise TicketArchiveError("Reason is required to archive ticket")
+
+    ticket.archived_at = func.now()
+    ticket.archived_by = current_user.id
+    ticket.archive_reason = normalized_reason
+
+    return _commit_and_refresh(db, ticket)
+
+
+def unarchive_ticket(db: Session, ticket_id: UUID, current_user: User) -> Ticket:
+    """Vuelve visible un ticket archivado sin reabrirlo."""
+
+    if current_user.role != UserRole.ADMIN:
+        raise TicketPermissionError("Only admins can unarchive tickets")
+
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+    if ticket is None:
+        raise TicketNotFoundError("Ticket not found")
+
+    if ticket.archived_at is None:
+        raise TicketArchiveError("Ticket is not archived")
+
+    ticket.archived_at = None
+    ticket.archived_by = None
+    ticket.archive_reason = None
+
+    return _commit_and_refresh(db, ticket)
+
+
+def archive_old_closed_tickets(db: Session, days: int = 30) -> int:
+    """Archiva tickets CLOSED que superaron la antiguedad configurada.
+
+    Este caso de uso queda preparado para ser ejecutado por un script o por
+    Celery mas adelante. No recibe usuario porque representa una accion del
+    sistema, no una decision manual de un admin.
+    """
+
+    if days <= 0:
+        raise TicketArchiveError("Days must be greater than zero")
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    tickets = (
+        db.query(Ticket)
+        .filter(
+            Ticket.status == TicketStatus.CLOSED,
+            Ticket.closed_at.is_not(None),
+            Ticket.closed_at <= cutoff,
+            Ticket.archived_at.is_(None),
+        )
+        .all()
+    )
+
+    for ticket in tickets:
+        ticket.archived_at = func.now()
+        ticket.archived_by = None
+        ticket.archive_reason = f"Archivado automaticamente luego de {days} dias cerrado"
+
+    try:
+        db.commit()
+        return len(tickets)
+    except Exception:
+        db.rollback()
+        raise
 
 
 def assign_ticket_to_team(db: Session, ticket_id: UUID, team_id: UUID, current_user: User) -> Ticket:

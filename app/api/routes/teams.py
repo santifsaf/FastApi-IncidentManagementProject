@@ -190,7 +190,7 @@ def get_team_tickets(
 
     return (
         db.query(Ticket)
-        .filter(Ticket.team_id == team.id)
+        .filter(Ticket.team_id == team.id, Ticket.archived_at.is_(None))
         .order_by(Ticket.created_at.desc())
         .offset(skip)
         .limit(limit)
