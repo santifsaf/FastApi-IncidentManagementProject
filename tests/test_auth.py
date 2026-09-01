@@ -48,7 +48,10 @@ def test_login_rejects_inactive_user(monkeypatch):
         is_active=False,
     )
 
-    monkeypatch.setattr(auth_routes, "verify_password", lambda plain, hashed: True)
+    def fake_verify_password(plain_password, hashed_password):
+        return True
+
+    monkeypatch.setattr(auth_routes, "verify_password", fake_verify_password)
     fake_session = FakeSession(user=inactive_user)
     form = FakeForm(username="inactive@example.com", password="password")
 
@@ -67,8 +70,15 @@ def test_login_returns_token_for_active_user(monkeypatch):
         is_active=True,
     )
 
-    monkeypatch.setattr(auth_routes, "verify_password", lambda plain, hashed: True)
-    monkeypatch.setattr(auth_routes, "create_access_token", lambda subject: "token")
+    def fake_verify_password(plain_password, hashed_password):
+        return True
+
+    def fake_create_access_token(subject):
+        assert subject == active_user.id
+        return "token"
+
+    monkeypatch.setattr(auth_routes, "verify_password", fake_verify_password)
+    monkeypatch.setattr(auth_routes, "create_access_token", fake_create_access_token)
     fake_session = FakeSession(user=active_user)
     form = FakeForm(username="active@example.com", password="password")
 
@@ -85,8 +95,14 @@ def test_login_normalizes_email_before_lookup(monkeypatch):
         is_active=True,
     )
 
-    monkeypatch.setattr(auth_routes, "verify_password", lambda plain, hashed: True)
-    monkeypatch.setattr(auth_routes, "create_access_token", lambda subject: "token")
+    def fake_verify_password(plain_password, hashed_password):
+        return True
+
+    def fake_create_access_token(subject):
+        return "token"
+
+    monkeypatch.setattr(auth_routes, "verify_password", fake_verify_password)
+    monkeypatch.setattr(auth_routes, "create_access_token", fake_create_access_token)
 
     class NormalizingQuery(FakeQuery):
         def __init__(self, user):
@@ -116,9 +132,11 @@ def test_decode_access_token_returns_typed_payload(monkeypatch):
     from app.core.config import settings
     from app.core.security import create_access_token, decode_access_token
 
-    settings.secret_key = "x" * 32
-    settings.algorithm = "HS256"
-    settings.access_token_expire_minutes = 1
+    # monkeypatch cambia settings solo durante este test y restaura los valores
+    # originales al finalizar, evitando contaminar otros casos.
+    monkeypatch.setattr(settings, "secret_key", "x" * 32)
+    monkeypatch.setattr(settings, "algorithm", "HS256")
+    monkeypatch.setattr(settings, "access_token_expire_minutes", 1)
 
     token = create_access_token("123e4567-e89b-12d3-a456-426614174000")
     payload = decode_access_token(token)
@@ -132,8 +150,9 @@ def test_decode_access_token_rejects_missing_required_claims(monkeypatch):
     from app.core.config import settings
     from app.core.security import decode_access_token
 
-    settings.secret_key = "x" * 32
-    settings.algorithm = "HS256"
+    # Usamos la misma configuracion controlada para generar y decodificar el JWT.
+    monkeypatch.setattr(settings, "secret_key", "x" * 32)
+    monkeypatch.setattr(settings, "algorithm", "HS256")
 
     token = jwt.encode(
         {"sub": "123e4567-e89b-12d3-a456-426614174000"},

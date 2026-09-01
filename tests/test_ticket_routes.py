@@ -192,10 +192,15 @@ def test_team_history_endpoint_returns_service_result(
 
     from app.api.routes import tickets as tickets_routes
 
+    def fake_get_ticket_team_history_service(db, current_ticket_id, current_user):
+        assert current_ticket_id == ticket_id
+        assert current_user is user
+        return [history_item]
+
     monkeypatch.setattr(
         tickets_routes,
         "get_ticket_team_history_service",
-        lambda db, current_ticket_id, current_user: [history_item],
+        fake_get_ticket_team_history_service,
     )
 
     response = client.get(f"/tickets/{ticket_id}/team-history")
@@ -225,10 +230,15 @@ def test_category_history_endpoint_returns_service_result(
 
     from app.api.routes import tickets as tickets_routes
 
+    def fake_get_ticket_category_history_service(db, current_ticket_id, current_user):
+        assert current_ticket_id == ticket_id
+        assert current_user is user
+        return [history_item]
+
     monkeypatch.setattr(
         tickets_routes,
         "get_ticket_category_history_service",
-        lambda db, current_ticket_id, current_user: [history_item],
+        fake_get_ticket_category_history_service,
     )
 
     response = client.get(f"/tickets/{ticket_id}/category-history")
@@ -257,10 +267,15 @@ def test_blocked_tickets_endpoint_returns_service_result(
     # Este endpoint delega casi todo en el service; aca solo validamos wiring HTTP.
     from app.api.routes import tickets as tickets_routes
 
+    def fake_get_blocked_tickets_service(db, current_ticket_id, current_user):
+        assert current_ticket_id == ticket_id
+        assert current_user is user
+        return [blocked_ticket]
+
     monkeypatch.setattr(
         tickets_routes,
         "get_blocked_tickets_service",
-        lambda db, current_ticket_id, current_user: [blocked_ticket],
+        fake_get_blocked_tickets_service,
     )
 
     response = client.get(f"/tickets/{ticket_id}/blocked-tickets")
@@ -288,10 +303,16 @@ def test_archive_ticket_endpoint_returns_archived_ticket(
 
     from app.api.routes import tickets as tickets_routes
 
+    def fake_archive_ticket(db, current_ticket_id, current_user, reason):
+        assert current_ticket_id == ticket.id
+        assert current_user is admin
+        assert reason == "Limpieza operativa"
+        return ticket
+
     monkeypatch.setattr(
         tickets_routes,
         "archive_ticket",
-        lambda db, ticket_id, current_user, reason: ticket,
+        fake_archive_ticket,
     )
 
     response = client.patch(
@@ -346,10 +367,15 @@ def test_unarchive_ticket_endpoint_returns_visible_ticket(
 
     from app.api.routes import tickets as tickets_routes
 
+    def fake_unarchive_ticket(db, current_ticket_id, current_user):
+        assert current_ticket_id == ticket.id
+        assert current_user is admin
+        return ticket
+
     monkeypatch.setattr(
         tickets_routes,
         "unarchive_ticket",
-        lambda db, ticket_id, current_user: ticket,
+        fake_unarchive_ticket,
     )
 
     response = client.patch(f"/tickets/{ticket.id}/unarchive")

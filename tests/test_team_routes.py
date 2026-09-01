@@ -43,7 +43,12 @@ def test_admin_can_create_team(client, monkeypatch, override_current_user, overr
 
     from app.api.routes import teams as teams_routes
 
-    monkeypatch.setattr(teams_routes, "create_team_service", lambda db, team_in: created_team)
+    def fake_create_team_service(db, team_in):
+        assert team_in.name == "Soporte Nivel 1"
+        assert team_in.lead_id == lead_id
+        return created_team
+
+    monkeypatch.setattr(teams_routes, "create_team_service", fake_create_team_service)
 
     response = client.post(
         "/teams/",
@@ -89,7 +94,11 @@ def test_admin_can_list_team_leads(client, monkeypatch, override_current_user, o
 
     from app.api.routes import teams as teams_routes
 
-    monkeypatch.setattr(teams_routes, "get_team_leads_service", lambda db, current_team_id: leads)
+    def fake_get_team_leads_service(db, current_team_id):
+        assert current_team_id == team_id
+        return leads
+
+    monkeypatch.setattr(teams_routes, "get_team_leads_service", fake_get_team_leads_service)
 
     response = client.get(f"/teams/{team_id}/leads")
 
@@ -109,7 +118,12 @@ def test_admin_can_add_team_lead(client, monkeypatch, override_current_user, ove
 
     from app.api.routes import teams as teams_routes
 
-    monkeypatch.setattr(teams_routes, "add_team_lead_service", lambda db, current_team_id, current_user_id: created_lead)
+    def fake_add_team_lead_service(db, current_team_id, current_user_id):
+        assert current_team_id == team_id
+        assert current_user_id == user_id
+        return created_lead
+
+    monkeypatch.setattr(teams_routes, "add_team_lead_service", fake_add_team_lead_service)
 
     response = client.post(
         f"/teams/{team_id}/leads",
