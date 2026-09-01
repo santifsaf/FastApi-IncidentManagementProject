@@ -5,6 +5,7 @@ La suite esta separada por nivel de responsabilidad:
 - `test_*_rules.py`: prueban reglas puras, sin base de datos ni FastAPI.
 - `test_*_service.py`: prueban casos de uso, validaciones de negocio, auditoria y commit/rollback.
 - `test_*_routes.py`: prueban endpoints con `TestClient`: rutas reales, dependencias, permisos HTTP, status codes y serializacion JSON.
+- `integration/`: ejecuta services, SQLAlchemy, constraints y Alembic contra una base PostgreSQL separada.
 - `conftest.py`: fixtures compartidas para tests HTTP.
 
 La idea es no duplicar todo en todos los niveles. Si una regla ya esta cubierta
@@ -23,6 +24,23 @@ Ejecutar la suite:
 
 ```bash
 python -m pytest tests -q
+```
+
+Los tests de integracion usan `APP_TEST_DATABASE_URL`. Si no esta definida,
+derivan el nombre agregando `_test` a la base de desarrollo. Como proteccion,
+rechazan la URL de desarrollo y cualquier base cuyo nombre no termine en
+`_test`. La base debe existir antes de ejecutar la suite.
+
+Para crearla con las mismas credenciales de PostgreSQL configuradas en `.env`:
+
+```bash
+python -m app.scripts.create_test_database
+```
+
+Si necesitás validar todas las migraciones nuevamente desde una base vacía:
+
+```bash
+python -m app.scripts.create_test_database --recreate
 ```
 
 ## TestClient

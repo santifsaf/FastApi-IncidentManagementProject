@@ -19,8 +19,10 @@ if config.config_file_name is not None:
 # Los imports de app.models registran User, Team, Category, Ticket e historiales en esta metadata.
 target_metadata = Base.metadata
 
-# Reemplaza la URL generica de alembic.ini por la URL real del proyecto.
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# En ejecucion normal usamos la base del proyecto. Los tests pueden pasar otra
+# URL mediante config.attributes sin modificar settings ni la base de desarrollo.
+database_url = config.attributes.get("database_url", settings.database_url)
+config.set_main_option("sqlalchemy.url", database_url)
 
 
 def run_migrations_offline() -> None:

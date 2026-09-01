@@ -20,7 +20,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Aplica los cambios de esta migracion."""
+    """Crea la estructura base sobre la que trabajan las demas migraciones."""
 
     # Crea el enum de PostgreSQL si todavia no existe.
     # checkfirst=True evita fallar si el tipo ya fue creado antes.
@@ -37,6 +37,40 @@ def upgrade() -> None:
         'CLOSED',
         name='ticketstatus',
         create_type=False,
+    )
+
+    # Las tablas principales deben existir antes que los historiales porque
+    # estos ultimos contienen foreign keys hacia users y tickets.
+    op.create_table(
+        'users',
+        sa.Column('id', sa.UUID(), nullable=False),
+        sa.Column('email', sa.String(), nullable=False),
+        sa.Column('password_hash', sa.String(), nullable=False),
+        sa.Column('full_name', sa.String(), nullable=True),
+        sa.Column('role', sa.String(), nullable=True),
+        sa.Column('is_active', sa.Boolean(), nullable=True),
+        sa.Column('last_assigned_at', sa.DateTime(), nullable=True),
+        sa.Column('created_at', sa.DateTime(), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+    )
+    op.create_index(op.f('ix_users_email'), 'users', ['email'], unique=True)
+
+    op.create_table(
+        'tickets',
+        sa.Column('id', sa.UUID(), nullable=False),
+        sa.Column('title', sa.String(), nullable=False),
+        sa.Column('description', sa.Text(), nullable=False),
+        # Empiezan como texto porque las migraciones siguientes convierten
+        # status y priority a enums de PostgreSQL de forma explicita.
+        sa.Column('status', sa.String(), nullable=False),
+        sa.Column('priority', sa.String(), nullable=False),
+        sa.Column('created_by', sa.UUID(), nullable=False),
+        sa.Column('assigned_to', sa.UUID(), nullable=True),
+        sa.Column('created_at', sa.DateTime(), nullable=True),
+        sa.Column('updated_at', sa.DateTime(), nullable=True),
+        sa.ForeignKeyConstraint(['assigned_to'], ['users.id']),
+        sa.ForeignKeyConstraint(['created_by'], ['users.id']),
+        sa.PrimaryKeyConstraint('id'),
     )
 
     # Historial de asignaciones:
@@ -81,16 +115,12 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Revierte los cambios de esta migracion."""
 
-    # Primero vuelve tickets.status a texto para que deje de depender del enum.
-    op.execute(
-        'ALTER TABLE tickets '
-        'ALTER COLUMN status TYPE VARCHAR '
-        'USING status::text'
-    )
-
-    # Luego elimina las tablas creadas por upgrade().
+    # Primero elimina las tablas dependientes y despues las principales.
     op.drop_table('ticket_status_history')
     op.drop_table('ticket_assignment_history')
+    op.drop_table('tickets')
+    op.drop_index(op.f('ix_users_email'), table_name='users')
+    op.drop_table('users')
 
     # Finalmente elimina el enum si ya no esta en uso.
     ticketstatus = postgresql.ENUM('OPEN', 'IN_PROGRESS', 'ON_HOLD', 'RESOLVED', 'CLOSED', name='ticketstatus')
