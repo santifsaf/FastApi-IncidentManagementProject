@@ -56,6 +56,7 @@ from app.services.ticket_service import (
     create_blocking_ticket,
     create_ticket_service,
     get_blocked_tickets_service,
+    get_ticket_detail,
     get_ticket_dependencies_service,
     get_ticket_category_history_service,
     get_ticket_team_history_service,
@@ -151,6 +152,22 @@ def get_all_tickets(
         )
 
     return query.offset(skip).limit(limit).all()
+
+
+@router.get("/{ticket_id}", response_model=TicketRead)
+def get_ticket_detail_endpoint(
+    ticket_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Consulta el detalle sin mezclar permisos ni queries en el router."""
+
+    try:
+        return get_ticket_detail(db, ticket_id, current_user)
+    except TicketNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except TicketPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
 
 
 # -----------------------------------------------------------------------------

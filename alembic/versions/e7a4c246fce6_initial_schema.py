@@ -1,4 +1,7 @@
-"""Esquema inicial
+"""Esquema inicial.
+
+Esta revision funciona como baseline: debe poder construir las tablas base en
+una base vacia antes de que las siguientes migraciones agreguen funcionalidades.
 
 ID de revision: e7a4c246fce6
 Revision anterior:
@@ -39,8 +42,8 @@ def upgrade() -> None:
         create_type=False,
     )
 
-    # Las tablas principales deben existir antes que los historiales porque
-    # estos ultimos contienen foreign keys hacia users y tickets.
+    # Orden obligatorio: primero las entidades principales y despues las tablas
+    # de auditoria que tienen foreign keys hacia ellas.
     op.create_table(
         'users',
         sa.Column('id', sa.UUID(), nullable=False),

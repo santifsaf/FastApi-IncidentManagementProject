@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from app.models.ticket import TicketPriority, TicketStatus
 from app.models.user import UserRole
-from app.services.ticket_service import TicketArchiveError
+from app.services.ticket_service import TicketArchiveError, TicketNotFoundError, TicketPermissionError
 
 
 class FakeQuery:
@@ -137,6 +137,87 @@ def test_get_all_tickets_endpoint_applies_pagination(client, override_current_us
 
     assert response.status_code == 200
     assert [item["id"] for item in response.json()] == [str(tickets[1].id)]
+
+
+def test_get_ticket_detail_endpoint_returns_service_result(
+    client,
+    monkeypatch,
+    override_current_user,
+    override_db,
+):
+    user = SimpleNamespace(id=uuid4(), role=UserRole.USER, is_active=True)
+    ticket = make_ticket(created_by=user.id)
+
+    override_current_user(user)
+    override_db()
+
+    from app.api.routes import tickets as tickets_routes
+
+    def fake_get_ticket_detail(db, current_ticket_id, current_user):
+        assert current_ticket_id == ticket.id
+        assert current_user is user
+        return ticket
+
+    monkeypatch.setattr(
+        tickets_routes,
+        "get_ticket_detail",
+        fake_get_ticket_detail,
+    )
+
+    response = client.get(f"/tickets/{ticket.id}")
+
+    assert response.status_code == 200
+    assert response.json()["id"] == str(ticket.id)
+
+
+def test_get_ticket_detail_endpoint_maps_not_found_to_404(
+    client,
+    monkeypatch,
+    override_current_user,
+    override_db,
+):
+    user = SimpleNamespace(id=uuid4(), role=UserRole.USER, is_active=True)
+    ticket_id = uuid4()
+
+    override_current_user(user)
+    override_db()
+
+    from app.api.routes import tickets as tickets_routes
+
+    def fake_get_ticket_detail(db, current_ticket_id, current_user):
+        raise TicketNotFoundError("Ticket not found")
+
+    monkeypatch.setattr(tickets_routes, "get_ticket_detail", fake_get_ticket_detail)
+
+    response = client.get(f"/tickets/{ticket_id}")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Ticket not found"
+
+
+def test_get_ticket_detail_endpoint_maps_permission_error_to_403(
+    client,
+    monkeypatch,
+    override_current_user,
+    override_db,
+):
+    user = SimpleNamespace(id=uuid4(), role=UserRole.USER, is_active=True)
+    ticket_id = uuid4()
+
+    override_current_user(user)
+    override_db()
+
+    from app.api.routes import tickets as tickets_routes
+
+    def fake_get_ticket_detail(db, current_ticket_id, current_user):
+        raise TicketPermissionError("Not enough permissions to view ticket")
+
+    monkeypatch.setattr(tickets_routes, "get_ticket_detail", fake_get_ticket_detail)
+
+    response = client.get(f"/tickets/{ticket_id}")
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Not enough permissions to view ticket"
 
 
 def test_status_history_endpoint_returns_403_for_unauthorized_user(client, override_current_user, override_db):

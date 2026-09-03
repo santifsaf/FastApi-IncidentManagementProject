@@ -1,3 +1,5 @@
+"""Configura como Alembic encuentra los modelos y la base que debe migrar."""
+
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
@@ -19,8 +21,8 @@ if config.config_file_name is not None:
 # Los imports de app.models registran User, Team, Category, Ticket e historiales en esta metadata.
 target_metadata = Base.metadata
 
-# En ejecucion normal usamos la base del proyecto. Los tests pueden pasar otra
-# URL mediante config.attributes sin modificar settings ni la base de desarrollo.
+# En CLI no existe el atributo y se usa APP_DATABASE_URL. Los tests agregan el
+# atributo programaticamente para ejecutar la misma cadena sobre ticketing_test.
 database_url = config.attributes.get("database_url", settings.database_url)
 config.set_main_option("sqlalchemy.url", database_url)
 

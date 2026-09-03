@@ -22,7 +22,7 @@ from app.models.ticket import (
     TicketStatusHistory,
     TicketTeamHistory,
 )
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.services.ticket_service import (
     InvalidStatusTransitionError,
     InvalidAssignedUserError,
@@ -36,6 +36,7 @@ from app.services.ticket_service import (
     TicketDependencyError,
     TicketDependencyNotFoundError,
     TicketArchiveError,
+    TicketNotFoundError,
     TicketTeamAssignmentError,
     TicketTeamPermissionError,
     TicketPermissionError,
@@ -49,6 +50,7 @@ from app.services.ticket_service import (
     create_blocking_ticket,
     create_ticket_service,
     get_blocked_tickets_service,
+    get_ticket_detail,
     remove_ticket_dependency,
     unarchive_ticket,
 )
@@ -288,6 +290,66 @@ def test_create_ticket_service_rejects_inactive_category():
         create_ticket_service(db, ticket_in, current_user)
 
     assert db.added == []
+
+
+def test_get_ticket_detail_returns_archived_ticket_created_by_user():
+    """Archivar lo quita de listados, pero el creador conserva acceso puntual."""
+
+    user = SimpleNamespace(id=uuid4(), role=UserRole.USER)
+    ticket = SimpleNamespace(
+        id=uuid4(),
+        created_by=user.id,
+        assigned_to=None,
+        team_id=None,
+        archived_at=datetime.now(timezone.utc),
+    )
+    db = TeamAwareFakeDb(ticket=ticket)
+
+    result = get_ticket_detail(db, ticket.id, user)
+
+    assert result is ticket
+
+
+def test_get_ticket_detail_returns_ticket_to_agent_from_team():
+    """El AGENT puede consultar tickets del team aunque no sea el asignado."""
+
+    agent = SimpleNamespace(id=uuid4(), role=UserRole.AGENT)
+    ticket = SimpleNamespace(
+        id=uuid4(),
+        created_by=uuid4(),
+        assigned_to=None,
+        team_id=uuid4(),
+        archived_at=None,
+    )
+    membership = SimpleNamespace(id=uuid4(), team_id=ticket.team_id, user_id=agent.id)
+    db = TeamAwareFakeDb(ticket=ticket, member=membership)
+
+    result = get_ticket_detail(db, ticket.id, agent)
+
+    assert result is ticket
+
+
+def test_get_ticket_detail_rejects_user_without_permission():
+    user = SimpleNamespace(id=uuid4(), role=UserRole.USER)
+    ticket = SimpleNamespace(
+        id=uuid4(),
+        created_by=uuid4(),
+        assigned_to=None,
+        team_id=None,
+        archived_at=None,
+    )
+    db = TeamAwareFakeDb(ticket=ticket)
+
+    with pytest.raises(TicketPermissionError, match="Not enough permissions to view ticket"):
+        get_ticket_detail(db, ticket.id, user)
+
+
+def test_get_ticket_detail_rejects_missing_ticket():
+    user = SimpleNamespace(id=uuid4(), role=UserRole.ADMIN)
+    db = TeamAwareFakeDb(ticket=None)
+
+    with pytest.raises(TicketNotFoundError, match="Ticket not found"):
+        get_ticket_detail(db, uuid4(), user)
 
 
 def test_assign_ticket_updates_ticket_and_creates_history():

@@ -92,13 +92,33 @@ def test_cannot_assign_ticket_to_missing_user():
     assert result is False
 
 
-def test_agent_can_view_ticket_from_own_team():
-    user = FakeUser(role="AGENT", id="agent-id")
-    ticket = FakeTicket(created_by="user-id", assigned_to=None, team_id="team-id")
+@pytest.mark.parametrize(
+    "role, user_id, created_by, assigned_to, is_team_member, expected",
+    [
+        ("ADMIN", "admin-id", "other-user", "other-agent", False, True),
+        ("USER", "user-id", "user-id", None, False, True),
+        ("USER", "user-id", "other-user", None, False, False),
+        ("AGENT", "agent-id", "other-user", "agent-id", False, True),
+        ("AGENT", "agent-id", "other-user", "other-agent", True, True),
+        ("AGENT", "agent-id", "other-user", "other-agent", False, False),
+    ],
+)
+def test_can_user_view_ticket(
+    role,
+    user_id,
+    created_by,
+    assigned_to,
+    is_team_member,
+    expected,
+):
+    """Cubre todos los caminos de visibilidad usados por el detalle."""
 
-    result = can_user_view_ticket(user, ticket, is_team_member=True)
+    user = FakeUser(role=role, id=user_id)
+    ticket = FakeTicket(created_by=created_by, assigned_to=assigned_to, team_id="team-id")
 
-    assert result is True
+    result = can_user_view_ticket(user, ticket, is_team_member=is_team_member)
+
+    assert result is expected
 
 
 @pytest.mark.parametrize(

@@ -8,6 +8,7 @@ from app.core.ticket_rules import (
     can_user_assign_ticket,
     can_user_change_status,
     can_user_view_assignment_history,
+    can_user_view_ticket,
     is_status_change_reason_required,
     is_valid_status_transition,
 )
@@ -242,6 +243,28 @@ def create_ticket_service(db: Session, ticket_in: TicketCreate, current_user: Us
     except Exception:
         db.rollback()
         raise
+
+
+def get_ticket_detail(db: Session, ticket_id: UUID, current_user: User) -> Ticket:
+    """Devuelve un ticket puntual si el usuario puede consultar ese recurso.
+
+    El archivado no cambia los permisos: solo oculta el ticket de los listados
+    operativos. Un usuario autorizado todavia puede abrir su detalle.
+    """
+
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+    if ticket is None:
+        raise TicketNotFoundError("Ticket not found")
+
+    # La membresia solo es relevante para AGENT y tickets asociados a un team.
+    current_user_is_team_member = False
+    if current_user.role == UserRole.AGENT and ticket.team_id is not None:
+        current_user_is_team_member = is_team_member(db, ticket.team_id, current_user.id)
+
+    if not can_user_view_ticket(current_user, ticket, current_user_is_team_member):
+        raise TicketPermissionError("Not enough permissions to view ticket")
+
+    return ticket
 
 
 def change_ticket_status(db: Session, ticket: Ticket, new_status: TicketStatus, user: User, reason=None) -> Ticket:
