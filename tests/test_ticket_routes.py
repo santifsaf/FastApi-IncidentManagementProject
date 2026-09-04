@@ -11,7 +11,12 @@ from uuid import uuid4
 
 from app.models.ticket import TicketCommentVisibility, TicketPriority, TicketStatus
 from app.models.user import UserRole
-from app.services.ticket_service import TicketArchiveError, TicketNotFoundError, TicketPermissionError
+from app.services.ticket_service import (
+    TicketArchiveError,
+    TicketCommentNotAllowedError,
+    TicketNotFoundError,
+    TicketPermissionError,
+)
 
 
 class FakeQuery:
@@ -547,3 +552,30 @@ def test_get_comments_endpoint_delegates_visibility_filter_to_service(
             "created_at": "2024-01-01T00:00:00Z",
         }
     ]
+
+
+def test_create_comment_endpoint_maps_closed_ticket_error_to_400(
+    client,
+    monkeypatch,
+    override_current_user,
+    override_db,
+):
+    user = SimpleNamespace(id=uuid4(), role=UserRole.USER, is_active=True)
+    ticket_id = uuid4()
+    override_current_user(user)
+    override_db()
+
+    from app.api.routes import tickets as tickets_routes
+
+    def fake_create_ticket_comment(db, current_ticket_id, comment_in, current_user):
+        raise TicketCommentNotAllowedError("Closed or archived tickets cannot receive comments")
+
+    monkeypatch.setattr(tickets_routes, "create_ticket_comment", fake_create_ticket_comment)
+
+    response = client.post(
+        f"/tickets/{ticket_id}/comments",
+        json={"body": "Comentario tardio", "visibility": "REQUESTER_VISIBLE"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Closed or archived tickets cannot receive comments"

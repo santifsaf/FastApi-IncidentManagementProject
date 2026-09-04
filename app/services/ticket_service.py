@@ -8,6 +8,7 @@ from app.core.ticket_rules import (
     can_user_assign_ticket,
     can_user_change_status,
     can_user_create_comment,
+    can_ticket_receive_comments,
     can_user_view_assignment_history,
     can_user_view_comments,
     can_user_view_ticket,
@@ -110,6 +111,10 @@ class TicketArchiveError(TicketServiceError):
 
 
 class TicketCommentError(TicketServiceError):
+    pass
+
+
+class TicketCommentNotAllowedError(TicketCommentError):
     pass
 
 
@@ -302,6 +307,9 @@ def create_ticket_comment(
     ):
         raise TicketPermissionError("Not enough permissions to add this ticket comment")
 
+    if not can_ticket_receive_comments(ticket):
+        raise TicketCommentNotAllowedError("Closed or archived tickets cannot receive comments")
+
     body = comment_in.body.strip()
     if not body:
         raise TicketCommentError("Comment body cannot be empty")
@@ -338,7 +346,7 @@ def get_ticket_comments(
 
     query = db.query(TicketComment).filter(TicketComment.ticket_id == ticket.id)
 
-    # Igual que Jira Service Management, el solicitante recibe solo mensajes publicos.
+    # El solicitante recibe solo mensajes publicos.
     if current_user.role == UserRole.USER:
         query = query.filter(TicketComment.visibility == TicketCommentVisibility.REQUESTER_VISIBLE)
 

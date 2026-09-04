@@ -10,6 +10,7 @@ from app.core.ticket_rules import (
     can_user_assign_ticket,
     can_user_change_status,
     can_user_create_comment,
+    can_ticket_receive_comments,
     can_user_view_comments,
     can_user_view_ticket,
     can_user_view_assignment_history,
@@ -260,3 +261,23 @@ def test_ticket_creator_can_view_comments_resource():
     ticket = FakeTicket(created_by=user.id)
 
     assert can_user_view_comments(user, ticket) is True
+
+
+@pytest.mark.parametrize(
+    "status, archived_at, expected",
+    [
+        (TicketStatus.OPEN, None, True),
+        (TicketStatus.IN_PROGRESS, None, True),
+        (TicketStatus.ON_HOLD, None, True),
+        (TicketStatus.RESOLVED, None, True),
+        (TicketStatus.CLOSED, None, False),
+        (TicketStatus.CLOSED, "archived-at", False),
+        (TicketStatus.OPEN, "archived-at", False),
+    ],
+)
+def test_can_ticket_receive_comments(status, archived_at, expected):
+    ticket = FakeTicket()
+    ticket.status = status
+    ticket.archived_at = archived_at
+
+    assert can_ticket_receive_comments(ticket) is expected

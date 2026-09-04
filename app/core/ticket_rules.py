@@ -105,6 +105,12 @@ def can_user_view_comments(user, ticket, is_team_member: bool = False) -> bool:
     return can_user_view_ticket(user, ticket, is_team_member)
 
 
+def can_ticket_receive_comments(ticket) -> bool:
+    """Un ticket cerrado o archivado conserva sus comentarios, pero no acepta nuevos."""
+
+    return ticket.status != TicketStatus.CLOSED and ticket.archived_at is None
+
+
 def can_user_create_comment(
     user,
     ticket,
@@ -127,7 +133,6 @@ def can_user_create_comment(
     if not (is_assigned_agent or is_team_member):
         return False
 
-    # Todo miembro participante puede colaborar mediante notas internas.
     if visibility == TicketCommentVisibility.INTERNAL:
         return True
 
