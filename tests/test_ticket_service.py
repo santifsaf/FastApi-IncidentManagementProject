@@ -16,6 +16,8 @@ from app.models.ticket import (
     Ticket,
     TicketAssignmentHistory,
     TicketCategoryHistory,
+    TicketComment,
+    TicketCommentVisibility,
     TicketDependency,
     TicketPriority,
     TicketStatus,
@@ -23,6 +25,7 @@ from app.models.ticket import (
     TicketTeamHistory,
 )
 from app.models.user import User, UserRole
+from app.schemas.ticket import TicketCommentCreate
 from app.services.ticket_service import (
     InvalidStatusTransitionError,
     InvalidAssignedUserError,
@@ -36,6 +39,7 @@ from app.services.ticket_service import (
     TicketDependencyError,
     TicketDependencyNotFoundError,
     TicketArchiveError,
+    TicketCommentError,
     TicketNotFoundError,
     TicketTeamAssignmentError,
     TicketTeamPermissionError,
@@ -48,6 +52,7 @@ from app.services.ticket_service import (
     change_ticket_category,
     change_ticket_status,
     create_blocking_ticket,
+    create_ticket_comment,
     create_ticket_service,
     get_blocked_tickets_service,
     get_ticket_detail,
@@ -350,6 +355,57 @@ def test_get_ticket_detail_rejects_missing_ticket():
 
     with pytest.raises(TicketNotFoundError, match="Ticket not found"):
         get_ticket_detail(db, uuid4(), user)
+
+
+def test_requester_creates_public_comment():
+    requester = SimpleNamespace(id=uuid4(), role=UserRole.USER)
+    ticket = SimpleNamespace(
+        id=uuid4(),
+        created_by=requester.id,
+        assigned_to=None,
+        team_id=None,
+    )
+    db = TeamAwareFakeDb(ticket=ticket)
+
+    comment = create_ticket_comment(
+        db,
+        ticket.id,
+        TicketCommentCreate(
+            body="  Todavia no puedo ingresar  ",
+            visibility=TicketCommentVisibility.REQUESTER_VISIBLE,
+        ),
+        requester,
+    )
+
+    assert isinstance(comment, TicketComment)
+    assert comment.author_id == requester.id
+    assert comment.body == "Todavia no puedo ingresar"
+    assert db.committed is True
+    assert db.refreshed is comment
+
+
+def test_create_ticket_comment_rejects_blank_body():
+    requester = SimpleNamespace(id=uuid4(), role=UserRole.USER)
+    ticket = SimpleNamespace(
+        id=uuid4(),
+        created_by=requester.id,
+        assigned_to=None,
+        team_id=None,
+    )
+    db = TeamAwareFakeDb(ticket=ticket)
+
+    with pytest.raises(TicketCommentError, match="Comment body cannot be empty"):
+        create_ticket_comment(
+            db,
+            ticket.id,
+            TicketCommentCreate(
+                body="   ",
+                visibility=TicketCommentVisibility.REQUESTER_VISIBLE,
+            ),
+            requester,
+        )
+
+    assert db.committed is False
 
 
 def test_assign_ticket_updates_ticket_and_creates_history():

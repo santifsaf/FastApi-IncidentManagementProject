@@ -6,15 +6,23 @@ import pytest
 
 from app.models.category import TicketCategory
 from app.models.team import Team, TeamMember
-from app.models.ticket import Ticket, TicketDependency, TicketStatus, TicketStatusHistory
+from app.models.ticket import (
+    Ticket,
+    TicketCommentVisibility,
+    TicketDependency,
+    TicketStatus,
+    TicketStatusHistory,
+)
 from app.models.user import User, UserRole
-from app.schemas.ticket import TicketCreate
+from app.schemas.ticket import TicketCommentCreate, TicketCreate
 from app.services.ticket_service import (
     TicketBlockedByOpenDependenciesError,
     TicketPermissionError,
     add_ticket_dependency,
     change_ticket_status,
+    create_ticket_comment,
     create_ticket_service,
+    get_ticket_comments,
     get_ticket_detail,
 )
 
@@ -185,3 +193,37 @@ def test_open_dependency_prevents_resolving_ticket(integration_db):
     assert persisted_dependency is not None
     assert persisted_dependency.is_active is True
     assert blocked_ticket.status == TicketStatus.IN_PROGRESS
+
+
+def test_requester_receives_only_public_comments(integration_db):
+    """El filtro de visibilidad se comprueba con consultas SQL reales."""
+
+    requester = _create_user(integration_db, UserRole.USER)
+    admin = _create_user(integration_db, UserRole.ADMIN)
+    category = _create_category(integration_db)
+    ticket = _create_ticket(integration_db, requester, category)
+
+    public_comment = create_ticket_comment(
+        integration_db,
+        ticket.id,
+        TicketCommentCreate(
+            body="Respuesta visible para el solicitante",
+            visibility=TicketCommentVisibility.REQUESTER_VISIBLE,
+        ),
+        requester,
+    )
+    create_ticket_comment(
+        integration_db,
+        ticket.id,
+        TicketCommentCreate(
+            body="Nota operativa que el solicitante no debe ver",
+            visibility=TicketCommentVisibility.INTERNAL,
+        ),
+        admin,
+    )
+
+    requester_comments = get_ticket_comments(integration_db, ticket.id, requester)
+    admin_comments = get_ticket_comments(integration_db, ticket.id, admin)
+
+    assert [comment.id for comment in requester_comments] == [public_comment.id]
+    assert len(admin_comments) == 2

@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
-from app.models.ticket import TicketPriority, TicketStatus
+from app.models.ticket import TicketCommentVisibility, TicketPriority, TicketStatus
 from app.models.user import UserRole
 from app.services.ticket_service import TicketArchiveError, TicketNotFoundError, TicketPermissionError
 
@@ -465,3 +465,85 @@ def test_unarchive_ticket_endpoint_returns_visible_ticket(
     assert response.json()["archived_at"] is None
     assert response.json()["archived_by"] is None
     assert response.json()["archive_reason"] is None
+
+
+def test_create_comment_endpoint_returns_created_comment(
+    client,
+    monkeypatch,
+    override_current_user,
+    override_db,
+):
+    user = SimpleNamespace(id=uuid4(), role=UserRole.USER, is_active=True)
+    ticket_id = uuid4()
+    comment = SimpleNamespace(
+        id=uuid4(),
+        ticket_id=ticket_id,
+        author_id=user.id,
+        body="Necesito ayuda con el acceso",
+        visibility=TicketCommentVisibility.REQUESTER_VISIBLE,
+        created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+    )
+    override_current_user(user)
+    override_db()
+
+    from app.api.routes import tickets as tickets_routes
+
+    def fake_create_ticket_comment(db, current_ticket_id, comment_in, current_user):
+        assert current_ticket_id == ticket_id
+        assert current_user is user
+        assert comment_in.visibility == TicketCommentVisibility.REQUESTER_VISIBLE
+        return comment
+
+    monkeypatch.setattr(tickets_routes, "create_ticket_comment", fake_create_ticket_comment)
+
+    response = client.post(
+        f"/tickets/{ticket_id}/comments",
+        json={"body": comment.body, "visibility": "REQUESTER_VISIBLE"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["visibility"] == "REQUESTER_VISIBLE"
+
+
+def test_get_comments_endpoint_delegates_visibility_filter_to_service(
+    client,
+    monkeypatch,
+    override_current_user,
+    override_db,
+):
+    user = SimpleNamespace(id=uuid4(), role=UserRole.USER, is_active=True)
+    ticket_id = uuid4()
+    comment = SimpleNamespace(
+        id=uuid4(),
+        ticket_id=ticket_id,
+        author_id=uuid4(),
+        body="Respuesta publica",
+        visibility=TicketCommentVisibility.REQUESTER_VISIBLE,
+        created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+    )
+    override_current_user(user)
+    override_db()
+
+    from app.api.routes import tickets as tickets_routes
+
+    def fake_get_ticket_comments(db, current_ticket_id, current_user, skip, limit):
+        assert current_ticket_id == ticket_id
+        assert current_user is user
+        assert (skip, limit) == (0, 20)
+        return [comment]
+
+    monkeypatch.setattr(tickets_routes, "get_ticket_comments", fake_get_ticket_comments)
+
+    response = client.get(f"/tickets/{ticket_id}/comments")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "id": str(comment.id),
+            "ticket_id": str(ticket_id),
+            "author_id": str(comment.author_id),
+            "body": "Respuesta publica",
+            "visibility": "REQUESTER_VISIBLE",
+            "created_at": "2024-01-01T00:00:00Z",
+        }
+    ]

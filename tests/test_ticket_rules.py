@@ -9,13 +9,15 @@ import pytest
 from app.core.ticket_rules import (
     can_user_assign_ticket,
     can_user_change_status,
+    can_user_create_comment,
+    can_user_view_comments,
     can_user_view_ticket,
     can_user_view_assignment_history,
     can_user_view_status_history,
     is_status_change_reason_required,
     is_valid_status_transition,
 )
-from app.models.ticket import TicketStatus
+from app.models.ticket import TicketCommentVisibility, TicketStatus
 
 
 class FakeUser:
@@ -209,3 +211,52 @@ def test_can_user_view_assignment_history(role, user_id, assigned_to, expected):
     result = can_user_view_assignment_history(user, ticket)
 
     assert result is expected
+
+
+@pytest.mark.parametrize(
+    "role, is_creator, is_assigned, is_member, is_lead, visibility, expected",
+    [
+        ("ADMIN", False, False, False, False, TicketCommentVisibility.INTERNAL, True),
+        ("USER", True, False, False, False, TicketCommentVisibility.REQUESTER_VISIBLE, True),
+        ("USER", True, False, False, False, TicketCommentVisibility.INTERNAL, False),
+        ("AGENT", False, True, False, False, TicketCommentVisibility.REQUESTER_VISIBLE, True),
+        ("AGENT", False, False, True, False, TicketCommentVisibility.INTERNAL, True),
+        ("AGENT", False, False, True, False, TicketCommentVisibility.REQUESTER_VISIBLE, False),
+        ("AGENT", False, False, True, True, TicketCommentVisibility.REQUESTER_VISIBLE, True),
+        ("AGENT", False, False, False, False, TicketCommentVisibility.INTERNAL, False),
+    ],
+)
+def test_can_user_create_comment(
+    role,
+    is_creator,
+    is_assigned,
+    is_member,
+    is_lead,
+    visibility,
+    expected,
+):
+    """Diferencia respuestas al solicitante de notas operativas internas."""
+
+    user = FakeUser(role=role, id="current-user")
+    ticket = FakeTicket(
+        created_by=user.id if is_creator else "other-user",
+        assigned_to=user.id if is_assigned else "other-agent",
+        team_id="team-id",
+    )
+
+    result = can_user_create_comment(
+        user,
+        ticket,
+        visibility,
+        is_team_member=is_member,
+        is_team_lead=is_lead,
+    )
+
+    assert result is expected
+
+
+def test_ticket_creator_can_view_comments_resource():
+    user = FakeUser(role="USER", id="creator-id")
+    ticket = FakeTicket(created_by=user.id)
+
+    assert can_user_view_comments(user, ticket) is True

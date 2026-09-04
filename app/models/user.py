@@ -50,3 +50,8 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+
+    authored_ticket_comments = relationship(
+        "TicketComment",
+        back_populates="author",
+    )

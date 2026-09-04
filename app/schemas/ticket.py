@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.ticket import TicketPriority, TicketStatus
+from app.models.ticket import TicketCommentVisibility, TicketPriority, TicketStatus
 
 #SCHEMAS GLOBALES DE TICKET
 class TicketCreate(BaseModel):
@@ -129,3 +129,21 @@ class BlockingTicketRead(BaseModel):
     current_ticket: TicketRead
     blocking_ticket: TicketRead
     dependency: TicketDependencyRead
+
+
+# SCHEMAS DE COMENTARIOS
+class TicketCommentCreate(BaseModel):
+    body: str
+    # Es obligatorio para no publicar accidentalmente una nota interna.
+    visibility: TicketCommentVisibility
+
+
+class TicketCommentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    ticket_id: UUID
+    author_id: UUID
+    body: str
+    visibility: TicketCommentVisibility
+    created_at: datetime

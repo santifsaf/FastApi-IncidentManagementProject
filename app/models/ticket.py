@@ -23,6 +23,13 @@ class TicketPriority(str, Enum):
     HIGH = "HIGH"
 
 
+class TicketCommentVisibility(str, Enum):
+    # Equivale a una respuesta publica de Jira: el solicitante puede leerla.
+    REQUESTER_VISIBLE = "REQUESTER_VISIBLE"
+    # Equivale a una nota interna de Jira: queda dentro del equipo operativo.
+    INTERNAL = "INTERNAL"
+
+
 class Ticket(Base):
     __tablename__ = "tickets"
 
@@ -59,9 +66,32 @@ class Ticket(Base):
 
     team = relationship("Team", back_populates="tickets")
     category = relationship("TicketCategory", back_populates="tickets")
+    comments = relationship(
+        "TicketComment",
+        back_populates="ticket",
+    )
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class TicketComment(Base):
+    """Mensaje publico para el solicitante o nota interna del equipo."""
+
+    __tablename__ = "ticket_comments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    ticket_id = Column(UUID(as_uuid=True), ForeignKey("tickets.id"), nullable=False, index=True)
+    author_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    body = Column(Text, nullable=False)
+    visibility = Column(
+        SqlEnum(TicketCommentVisibility, name="ticketcommentvisibility"),
+        nullable=False,
+    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    ticket = relationship("Ticket", back_populates="comments")
+    author = relationship("User", back_populates="authored_ticket_comments")
 
 
 class TicketStatusHistory(Base):

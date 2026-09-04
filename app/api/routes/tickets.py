@@ -18,6 +18,8 @@ from app.schemas.ticket import (
     TicketArchiveUpdate,
     TicketCategoryHistoryRead,
     TicketCategoryUpdate,
+    TicketCommentCreate,
+    TicketCommentRead,
     TicketCreate,
     TicketDependencyCreate,
     TicketDependencyRemove,
@@ -45,6 +47,7 @@ from app.services.ticket_service import (
     InvalidTicketCategoryChangeError,
     TicketBlockedByOpenDependenciesError,
     TicketArchiveError,
+    TicketCommentError,
     TicketDependencyError,
     TicketDependencyNotFoundError,
     add_ticket_dependency,
@@ -54,11 +57,13 @@ from app.services.ticket_service import (
     change_ticket_category,
     change_ticket_status,
     create_blocking_ticket,
+    create_ticket_comment,
     create_ticket_service,
     get_blocked_tickets_service,
     get_ticket_detail,
     get_ticket_dependencies_service,
     get_ticket_category_history_service,
+    get_ticket_comments,
     get_ticket_team_history_service,
     remove_ticket_dependency,
     unarchive_ticket,
@@ -397,6 +402,48 @@ def create_ticket_blocking_ticket(
         raise HTTPException(status_code=404, detail=str(exc))
     except (TicketDependencyError, InvalidTicketCategoryError, MissingStatusChangeReasonError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except TicketPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+
+# -----------------------------------------------------------------------------
+# Comentarios
+# -----------------------------------------------------------------------------
+
+
+@router.post("/{ticket_id}/comments", response_model=TicketCommentRead, status_code=201)
+def create_ticket_comment_endpoint(
+    ticket_id: UUID,
+    comment_in: TicketCommentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Recibe la peticion HTTP; permisos y persistencia viven en el service."""
+
+    try:
+        return create_ticket_comment(db, ticket_id, comment_in, current_user)
+    except TicketNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except TicketPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except TicketCommentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/{ticket_id}/comments", response_model=list[TicketCommentRead])
+def get_ticket_comments_endpoint(
+    ticket_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+    skip: PaginationSkip = 0,
+    limit: PaginationLimit = 20,
+):
+    """Delega al service el acceso y el filtro de comentarios internos."""
+
+    try:
+        return get_ticket_comments(db, ticket_id, current_user, skip, limit)
+    except TicketNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
     except TicketPermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
 

@@ -1,4 +1,4 @@
-from app.models.ticket import TicketStatus
+from app.models.ticket import TicketCommentVisibility, TicketStatus
 from app.models.user import UserRole
 
 
@@ -97,3 +97,39 @@ def can_user_view_assignment_history(user, ticket, is_team_member: bool = False)
         return True
 
     return False
+
+
+def can_user_view_comments(user, ticket, is_team_member: bool = False) -> bool:
+    """Los comentarios siguen el acceso al ticket; la visibilidad se filtra aparte."""
+
+    return can_user_view_ticket(user, ticket, is_team_member)
+
+
+def can_user_create_comment(
+    user,
+    ticket,
+    visibility: TicketCommentVisibility,
+    is_team_member: bool = False,
+    is_team_lead: bool = False,
+) -> bool:
+    """Decide si el participante puede publicar el tipo de comentario solicitado."""
+
+    if user.role == UserRole.ADMIN:
+        return True
+
+    if user.role == UserRole.USER:
+        return ticket.created_by == user.id and visibility == TicketCommentVisibility.REQUESTER_VISIBLE
+
+    if user.role != UserRole.AGENT:
+        return False
+
+    is_assigned_agent = ticket.assigned_to == user.id
+    if not (is_assigned_agent or is_team_member):
+        return False
+
+    # Todo miembro participante puede colaborar mediante notas internas.
+    if visibility == TicketCommentVisibility.INTERNAL:
+        return True
+
+    # Las respuestas al solicitante quedan a cargo del responsable o de un lead.
+    return is_assigned_agent or is_team_lead
