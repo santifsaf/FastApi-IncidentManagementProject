@@ -2,7 +2,8 @@
 
 Estos tests usan TestClient porque queremos validar la capa API: path real,
 dependencias, status codes, response_model y serializacion JSON. La logica fina
-del negocio queda cubierta en test_ticket_service.py y test_ticket_rules.py.
+del negocio queda cubierta en los archivos test_ticket_*_service.py y
+test_ticket_rules.py.
 """
 
 from datetime import datetime, timezone
@@ -11,7 +12,7 @@ from uuid import uuid4
 
 from app.models.ticket import TicketCommentVisibility, TicketPriority, TicketStatus
 from app.models.user import UserRole
-from app.services.ticket_service import (
+from app.services.ticket_exceptions import (
     TicketArchiveError,
     TicketCommentNotAllowedError,
     TicketNotFoundError,

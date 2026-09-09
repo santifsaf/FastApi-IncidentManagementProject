@@ -27,7 +27,23 @@ from app.schemas.ticket import (
     TicketTeamAssignmentUpdate,
     UpdateTicketStatus,
 )
-from app.services.ticket_service import (
+from app.services.ticket_assignment_service import (
+    assign_ticket,
+    assign_ticket_to_team,
+    change_ticket_category,
+    get_ticket_assignment_history_service,
+    get_ticket_category_history_service,
+    get_ticket_team_history_service,
+)
+from app.services.ticket_comment_service import create_ticket_comment, get_ticket_comments
+from app.services.ticket_dependency_service import (
+    add_ticket_dependency,
+    create_blocking_ticket,
+    get_blocked_tickets_service,
+    get_ticket_dependencies_service,
+    remove_ticket_dependency,
+)
+from app.services.ticket_exceptions import (
     AssignedUserNotFoundError,
     TicketCategoryNotFoundError,
     TicketDependencyNotFoundError,
@@ -36,28 +52,19 @@ from app.services.ticket_service import (
     TicketTeamNotFoundError,
     TicketTeamPermissionError,
     TicketServiceError,
-    add_ticket_dependency,
+)
+from app.services.ticket_lifecycle_service import (
     archive_ticket,
-    assign_ticket,
-    assign_ticket_to_team,
-    change_ticket_category,
     change_ticket_status,
-    create_blocking_ticket,
-    create_ticket_comment,
-    create_ticket_service,
-    get_blocked_tickets_service,
-    get_ticket_detail,
-    get_ticket_dependencies_service,
-    get_ticket_assignment_history_service,
-    get_ticket_category_history_service,
-    get_ticket_comments,
     get_ticket_status_history_service,
-    get_ticket_team_history_service,
+    unarchive_ticket,
+)
+from app.services.ticket_service import (
+    create_ticket_service,
+    get_ticket_detail,
     get_tickets_assigned_to_user,
     get_tickets_created_by_user,
     get_visible_tickets,
-    remove_ticket_dependency,
-    unarchive_ticket,
 )
 
 router = APIRouter(prefix="/tickets", tags=["tickets"])

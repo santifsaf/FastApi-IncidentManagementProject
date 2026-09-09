@@ -4,13 +4,13 @@ Uso:
     python -m app.scripts.archive_closed_tickets
 
 Este script es intencionalmente fino: abre una sesion, lee la configuracion y
-delega la regla de negocio en ticket_service.archive_old_closed_tickets().
+delega la regla de negocio en ticket_lifecycle_service.
 Mas adelante Celery puede reutilizar el mismo service.
 """
 
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.services.ticket_service import archive_old_closed_tickets
+from app.services.ticket_lifecycle_service import archive_old_closed_tickets
 
 
 def main() -> int:

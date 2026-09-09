@@ -8,6 +8,15 @@ La suite esta separada por nivel de responsabilidad:
 - `integration/`: ejecuta services, SQLAlchemy, constraints y Alembic contra una base PostgreSQL separada.
 - `conftest.py`: fixtures compartidas para tests HTTP.
 
+Los tests unitarios de tickets reflejan la misma division que los services:
+
+- `test_ticket_service.py`: creacion y consulta del ticket.
+- `test_ticket_assignment_service.py`: agente, team, categoria e historiales asociados.
+- `test_ticket_lifecycle_service.py`: cambios de estado y archivado.
+- `test_ticket_comment_service.py`: comentarios publicos e internos.
+- `test_ticket_dependency_service.py`: dependencias y tickets bloqueantes.
+- `ticket_service_fakes.py`: sesiones y queries simuladas compartidas; no contiene tests.
+
 La idea es no duplicar todo en todos los niveles. Si una regla ya esta cubierta
 en un service, el test HTTP solo valida que el endpoint conecte bien esa regla
 con FastAPI.

@@ -15,16 +15,14 @@ from app.models.ticket import (
 )
 from app.models.user import User, UserRole
 from app.schemas.ticket import TicketCommentCreate, TicketCreate
-from app.services.ticket_service import (
+from app.services.ticket_comment_service import create_ticket_comment, get_ticket_comments
+from app.services.ticket_dependency_service import add_ticket_dependency
+from app.services.ticket_exceptions import (
     TicketBlockedByOpenDependenciesError,
     TicketPermissionError,
-    add_ticket_dependency,
-    change_ticket_status,
-    create_ticket_comment,
-    create_ticket_service,
-    get_ticket_comments,
-    get_ticket_detail,
 )
+from app.services.ticket_lifecycle_service import change_ticket_status
+from app.services.ticket_service import create_ticket_service, get_ticket_detail
 
 
 # Marca todos los tests del archivo para poder incluirlos o excluirlos con -m.
