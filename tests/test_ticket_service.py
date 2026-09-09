@@ -1091,12 +1091,12 @@ def test_create_blocking_ticket_creates_ticket_dependency_and_sets_current_ticke
 
 
 def test_change_ticket_status_cannot_resolve_with_open_dependencies():
-    db = TeamAwareFakeDb(open_dependency=SimpleNamespace(id=uuid4()))
     ticket = SimpleNamespace(id=uuid4(), status=TicketStatus.IN_PROGRESS, assigned_to=None)
+    db = TeamAwareFakeDb(ticket=ticket, open_dependency=SimpleNamespace(id=uuid4()))
     current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
 
     with pytest.raises(TicketBlockedByOpenDependenciesError, match="open dependencies"):
-        change_ticket_status(db, ticket, TicketStatus.RESOLVED, current_user)
+        change_ticket_status(db, ticket.id, TicketStatus.RESOLVED, current_user)
 
     assert ticket.status == TicketStatus.IN_PROGRESS
     assert db.added == []
@@ -1182,19 +1182,18 @@ def test_agent_without_team_lead_permission_cannot_remove_dependency():
 
 
 def test_change_ticket_status_updates_ticket_and_creates_history():
-    db = FakeDb()
-
     ticket = SimpleNamespace(
         id=uuid4(),
         status="OPEN",
     )
+    db = TeamAwareFakeDb(ticket=ticket)
 
     current_user = SimpleNamespace(
         id=uuid4(),
         role="ADMIN",
     )
 
-    result = change_ticket_status(db, ticket, "IN_PROGRESS", current_user)
+    result = change_ticket_status(db, ticket.id, "IN_PROGRESS", current_user)
 
     assert result is ticket
     assert ticket.status == "IN_PROGRESS"
@@ -1212,19 +1211,18 @@ def test_change_ticket_status_updates_ticket_and_creates_history():
 
 
 def test_change_ticket_status_saves_reason_when_provided():
-    db = FakeDb()
-
     ticket = SimpleNamespace(
         id=uuid4(),
         status="OPEN",
     )
+    db = TeamAwareFakeDb(ticket=ticket)
 
     current_user = SimpleNamespace(
         id=uuid4(),
         role="ADMIN",
     )
 
-    result = change_ticket_status(db, ticket, "ON_HOLD", current_user, "Waiting for provider")
+    result = change_ticket_status(db, ticket.id, "ON_HOLD", current_user, "Waiting for provider")
 
     assert result is ticket
     assert ticket.status == "ON_HOLD"
@@ -1234,14 +1232,14 @@ def test_change_ticket_status_saves_reason_when_provided():
 
 
 def test_change_ticket_status_sets_closed_at_when_closing_ticket():
-    db = FakeDb()
     ticket = SimpleNamespace(
         id=uuid4(),
         status=TicketStatus.RESOLVED,
     )
+    db = TeamAwareFakeDb(ticket=ticket)
     current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
 
-    result = change_ticket_status(db, ticket, TicketStatus.CLOSED, current_user, "Confirmado")
+    result = change_ticket_status(db, ticket.id, TicketStatus.CLOSED, current_user, "Confirmado")
 
     assert result is ticket
     assert ticket.status == TicketStatus.CLOSED
@@ -1250,12 +1248,11 @@ def test_change_ticket_status_sets_closed_at_when_closing_ticket():
 
 
 def test_change_ticket_status_requires_reason_for_sensitive_status_change():
-    db = FakeDb()
-
     ticket = SimpleNamespace(
         id=uuid4(),
         status="OPEN",
     )
+    db = TeamAwareFakeDb(ticket=ticket)
 
     current_user = SimpleNamespace(
         id=uuid4(),
@@ -1263,7 +1260,7 @@ def test_change_ticket_status_requires_reason_for_sensitive_status_change():
     )
 
     with pytest.raises(MissingStatusChangeReasonError, match="Reason is required"):
-        change_ticket_status(db, ticket, "ON_HOLD", current_user)
+        change_ticket_status(db, ticket.id, "ON_HOLD", current_user)
 
     assert ticket.status == "OPEN"
     assert db.added == []
@@ -1405,12 +1402,11 @@ def test_archive_old_closed_tickets_rolls_back_when_commit_fails():
 
 
 def test_change_ticket_status_treats_blank_reason_as_missing():
-    db = FakeDb()
-
     ticket = SimpleNamespace(
         id=uuid4(),
         status="RESOLVED",
     )
+    db = TeamAwareFakeDb(ticket=ticket)
 
     current_user = SimpleNamespace(
         id=uuid4(),
@@ -1418,7 +1414,7 @@ def test_change_ticket_status_treats_blank_reason_as_missing():
     )
 
     with pytest.raises(MissingStatusChangeReasonError, match="Reason is required"):
-        change_ticket_status(db, ticket, "OPEN", current_user, "   ")
+        change_ticket_status(db, ticket.id, "OPEN", current_user, "   ")
 
     assert ticket.status == "RESOLVED"
     assert db.added == []
@@ -1427,13 +1423,12 @@ def test_change_ticket_status_treats_blank_reason_as_missing():
 
 
 def test_change_ticket_status_raises_value_error_for_invalid_transition():
-    db = FakeDb()
-
     ticket = SimpleNamespace(id=uuid4(), status="CLOSED")
+    db = TeamAwareFakeDb(ticket=ticket)
     current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
 
     with pytest.raises(InvalidStatusTransitionError, match="Invalid transition"):
-        change_ticket_status(db, ticket, "OPEN", current_user)
+        change_ticket_status(db, ticket.id, "OPEN", current_user)
 
     assert db.added == []
     assert db.committed is False
@@ -1441,13 +1436,12 @@ def test_change_ticket_status_raises_value_error_for_invalid_transition():
 
 
 def test_change_ticket_status_raises_permission_error_for_unauthorized_user():
-    db = FakeDb()
-
     ticket = SimpleNamespace(id=uuid4(), status="OPEN")
+    db = TeamAwareFakeDb(ticket=ticket)
     current_user = SimpleNamespace(id=uuid4(), role="USER")
 
     with pytest.raises(TicketPermissionError, match="Not enough permissions"):
-        change_ticket_status(db, ticket, "IN_PROGRESS", current_user)
+        change_ticket_status(db, ticket.id, "IN_PROGRESS", current_user)
 
     assert db.added == []
     assert db.committed is False

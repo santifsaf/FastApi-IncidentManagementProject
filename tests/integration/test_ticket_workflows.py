@@ -150,7 +150,7 @@ def test_status_change_persists_ticket_and_history_atomically(integration_db):
 
     result = change_ticket_status(
         integration_db,
-        ticket,
+        ticket.id,
         TicketStatus.IN_PROGRESS,
         agent,
     )
@@ -194,7 +194,7 @@ def test_open_dependency_prevents_resolving_ticket(integration_db):
     with pytest.raises(TicketBlockedByOpenDependenciesError):
         change_ticket_status(
             integration_db,
-            blocked_ticket,
+            blocked_ticket.id,
             TicketStatus.RESOLVED,
             admin,
         )

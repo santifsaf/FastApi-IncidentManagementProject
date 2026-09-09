@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import func
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.ticket_rules import (
@@ -11,12 +11,13 @@ from app.core.ticket_rules import (
     can_ticket_receive_comments,
     can_user_view_assignment_history,
     can_user_view_comments,
+    can_user_view_status_history,
     can_user_view_ticket,
     is_status_change_reason_required,
     is_valid_status_transition,
 )
 from app.models.category import TicketCategory
-from app.models.team import Team
+from app.models.team import Team, TeamMember
 from app.models.ticket import (
     Ticket,
     TicketAssignmentHistory,
@@ -34,6 +35,7 @@ from app.services.category_queries import is_category_associated_with_team
 from app.services.team_queries import is_team_lead, is_team_member
 
 
+# Excepciones del dominio
 class TicketServiceError(Exception):
     pass
 
@@ -118,6 +120,7 @@ class TicketCommentNotAllowedError(TicketCommentError):
     pass
 
 
+# Helpers compartidos por los casos de uso
 def _commit_and_refresh(db: Session, entity):
     try:
         db.commit()
@@ -231,6 +234,7 @@ def _assign_ticket_to_user(db: Session, ticket: Ticket, new_user_id: UUID, chang
     return _commit_and_refresh(db, ticket)
 
 
+# Creacion y consultas principales
 def create_ticket_service(db: Session, ticket_in: TicketCreate, current_user: User) -> Ticket:
     category = db.query(TicketCategory).filter(TicketCategory.id == ticket_in.category_id).first()
     if category is None:
@@ -258,6 +262,70 @@ def create_ticket_service(db: Session, ticket_in: TicketCreate, current_user: Us
         raise
 
 
+def get_tickets_created_by_user(
+    db: Session,
+    current_user: User,
+    skip: int,
+    limit: int,
+) -> list[Ticket]:
+    """Lista tickets creados por el usuario autenticado."""
+
+    return (
+        db.query(Ticket)
+        .filter(Ticket.created_by == current_user.id, Ticket.archived_at.is_(None))
+        .order_by(Ticket.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+
+def get_tickets_assigned_to_user(
+    db: Session,
+    current_user: User,
+    skip: int,
+    limit: int,
+) -> list[Ticket]:
+    """Lista los tickets donde el usuario es responsable directo."""
+
+    if current_user.role not in {UserRole.AGENT, UserRole.ADMIN}:
+        raise TicketPermissionError("Not enough permissions")
+
+    return (
+        db.query(Ticket)
+        .filter(Ticket.assigned_to == current_user.id, Ticket.archived_at.is_(None))
+        .order_by(Ticket.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+
+def get_visible_tickets(
+    db: Session,
+    current_user: User,
+    skip: int,
+    limit: int,
+) -> list[Ticket]:
+    """Lista la cola operativa respetando el alcance del usuario."""
+
+    if current_user.role not in {UserRole.AGENT, UserRole.ADMIN}:
+        raise TicketPermissionError("Not enough permissions")
+
+    query = db.query(Ticket).filter(Ticket.archived_at.is_(None)).order_by(Ticket.created_at.desc())
+
+    if current_user.role == UserRole.AGENT:
+        team_ids = select(TeamMember.team_id).where(TeamMember.user_id == current_user.id)
+        query = query.filter(
+            or_(
+                Ticket.assigned_to == current_user.id,
+                Ticket.team_id.in_(team_ids),
+            )
+        )
+
+    return query.offset(skip).limit(limit).all()
+
+
 def get_ticket_detail(db: Session, ticket_id: UUID, current_user: User) -> Ticket:
     """Devuelve un ticket puntual si el usuario puede consultar ese recurso.
 
@@ -280,6 +348,7 @@ def get_ticket_detail(db: Session, ticket_id: UUID, current_user: User) -> Ticke
     return ticket
 
 
+# Comentarios
 def create_ticket_comment(
     db: Session,
     ticket_id: UUID,
@@ -359,7 +428,20 @@ def get_ticket_comments(
     )
 
 
-def change_ticket_status(db: Session, ticket: Ticket, new_status: TicketStatus, user: User, reason=None) -> Ticket:
+# Estado y archivado
+def change_ticket_status(
+    db: Session,
+    ticket_id: UUID,
+    new_status: TicketStatus,
+    user: User,
+    reason: str | None = None,
+) -> Ticket:
+    """Busca el ticket y ejecuta el cambio de estado completo."""
+
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+    if ticket is None:
+        raise TicketNotFoundError("Ticket not found")
+
     # El service revalida permisos y transiciones para no depender solo del router.
     if not can_user_change_status(user, ticket, new_status):
         raise TicketPermissionError("Not enough permissions to change ticket status")
@@ -477,6 +559,43 @@ def archive_old_closed_tickets(db: Session, days: int = 30) -> int:
     except Exception:
         db.rollback()
         raise
+
+
+# Asignacion, categorizacion e historiales
+def assign_ticket(db: Session, ticket_id: UUID, assigned_user_id: UUID, current_user: User) -> Ticket:
+    """Asigna un ticket a un responsable operativo activo.
+
+    El ticket debe pertenecer primero a un team y el responsable, AGENT o
+    ADMIN, debe ser miembro. Un AGENT que asigna tambien debe ser lead.
+    """
+
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+    if ticket is None:
+        raise TicketNotFoundError("Ticket not found")
+
+    if ticket.team_id is None:
+        raise TicketTeamAssignmentError("Ticket must belong to a team before assigning a responsible user")
+
+    assigned_user = db.query(User).filter(User.id == assigned_user_id).first()
+    if assigned_user is None:
+        raise AssignedUserNotFoundError("Assigned user not found")
+
+    if not assigned_user.is_active:
+        raise InvalidAssignedUserError("Assigned user must be active")
+
+    is_current_user_team_lead = is_team_lead(db, ticket.team_id, current_user.id)
+    is_assigned_user_team_member = is_team_member(db, ticket.team_id, assigned_user.id)
+
+    if not can_user_assign_ticket(
+        current_user,
+        assigned_user,
+        ticket,
+        is_current_user_team_lead=is_current_user_team_lead,
+        is_assigned_user_team_member=is_assigned_user_team_member,
+    ):
+        raise TicketPermissionError("Not enough permissions or invalid assignment")
+
+    return _assign_ticket_to_user(db, ticket, assigned_user.id, current_user.id)
 
 
 def assign_ticket_to_team(db: Session, ticket_id: UUID, team_id: UUID, current_user: User) -> Ticket:
@@ -635,6 +754,52 @@ def get_ticket_category_history_service(db: Session, ticket_id: UUID, current_us
     )
 
 
+def get_ticket_status_history_service(
+    db: Session,
+    ticket_id: UUID,
+    current_user: User,
+) -> list[TicketStatusHistory]:
+    """Devuelve el historial de estado aplicando permisos de lectura."""
+
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+    if ticket is None:
+        raise TicketNotFoundError("Ticket not found")
+
+    current_user_is_team_member = is_team_member(db, ticket.team_id, current_user.id)
+    if not can_user_view_status_history(current_user, ticket, current_user_is_team_member):
+        raise TicketPermissionError("Not enough permissions to view ticket status history")
+
+    return (
+        db.query(TicketStatusHistory)
+        .filter(TicketStatusHistory.ticket_id == ticket_id)
+        .order_by(TicketStatusHistory.changed_at.desc())
+        .all()
+    )
+
+
+def get_ticket_assignment_history_service(
+    db: Session,
+    ticket_id: UUID,
+    current_user: User,
+) -> list[TicketAssignmentHistory]:
+    """Devuelve el historial de responsables aplicando permisos internos."""
+
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+    if ticket is None:
+        raise TicketNotFoundError("Ticket not found")
+
+    current_user_is_team_member = is_team_member(db, ticket.team_id, current_user.id)
+    if not can_user_view_assignment_history(current_user, ticket, current_user_is_team_member):
+        raise TicketPermissionError("Not enough permissions to view ticket assignment history")
+
+    return (
+        db.query(TicketAssignmentHistory)
+        .filter(TicketAssignmentHistory.ticket_id == ticket_id)
+        .order_by(TicketAssignmentHistory.changed_at.desc())
+        .all()
+    )
+
+
 def get_ticket_team_history_service(db: Session, ticket_id: UUID, current_user: User) -> list[TicketTeamHistory]:
     """Devuelve el historial de equipos de un ticket aplicando permisos.
 
@@ -658,6 +823,7 @@ def get_ticket_team_history_service(db: Session, ticket_id: UUID, current_user: 
     )
 
 
+# Dependencias entre tickets
 def add_ticket_dependency(
     db: Session,
     ticket_id: UUID,
@@ -847,43 +1013,3 @@ def create_blocking_ticket(
     except Exception:
         db.rollback()
         raise
-
-
-def assign_ticket(db: Session, ticket_id: UUID, assigned_user_id: UUID, current_user: User) -> Ticket:
-    """Asigna un ticket a un responsable operativo activo.
-
-    El ticket debe pertenecer primero a un team y el responsable, AGENT o
-    ADMIN, debe ser miembro. Un AGENT que asigna tambien debe ser lead.
-    """
-
-    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
-    if ticket is None:
-        raise TicketNotFoundError("Ticket not found")
-
-    if ticket.team_id is None:
-        raise TicketTeamAssignmentError("Ticket must belong to a team before assigning a responsible user")
-
-    assigned_user = db.query(User).filter(User.id == assigned_user_id).first()
-    if assigned_user is None:
-        raise AssignedUserNotFoundError("Assigned user not found")
-
-    if not assigned_user.is_active:
-        raise InvalidAssignedUserError("Assigned user must be active")
-
-    is_current_user_team_lead = False
-    is_assigned_user_team_member = False
-
-    if ticket.team_id is not None:
-        is_current_user_team_lead = is_team_lead(db, ticket.team_id, current_user.id)
-        is_assigned_user_team_member = is_team_member(db, ticket.team_id, assigned_user.id)
-
-    if not can_user_assign_ticket(
-        current_user,
-        assigned_user,
-        ticket,
-        is_current_user_team_lead,
-        is_assigned_user_team_member,
-    ):
-        raise TicketPermissionError("Not enough permissions or invalid assignment")
-
-    return _assign_ticket_to_user(db, ticket, assigned_user.id, current_user.id)

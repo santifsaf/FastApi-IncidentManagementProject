@@ -151,8 +151,9 @@ def test_team_lead_can_assign_ticket_to_admin_member_of_team():
 
 def test_cannot_assign_ticket_to_missing_user():
     current_user = FakeUser(role="ADMIN")
+    ticket = FakeTicket(team_id="team-id")
 
-    result = can_user_assign_ticket(current_user, None)
+    result = can_user_assign_ticket(current_user, None, ticket)
 
     assert result is False
 

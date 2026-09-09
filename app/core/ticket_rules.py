@@ -56,7 +56,8 @@ def can_user_view_ticket(user, ticket, is_team_member: bool = False) -> bool:
 def can_user_assign_ticket(
     current_user,
     assigned_user,
-    ticket=None,
+    ticket,
+    *,
     is_current_user_team_lead: bool = False,
     is_assigned_user_team_member: bool = False,
 ) -> bool:
@@ -66,7 +67,7 @@ def can_user_assign_ticket(
 
     # Un ticket debe ingresar primero a un equipo. Ningun rol, incluido ADMIN,
     # puede asignar una persona directamente desde la cola de categoria.
-    if ticket is None or ticket.team_id is None:
+    if ticket.team_id is None:
         return False
 
     # El responsable debe pertenecer al equipo que atiende el ticket.

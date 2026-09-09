@@ -2,14 +2,11 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_active_user, require_roles
 from app.db.session import get_db
-from app.models.team import TeamMember
-from app.models.ticket import Ticket, TicketAssignmentHistory, TicketStatusHistory
-from app.models.user import User, UserRole
+from app.models.user import User
 from app.schemas.ticket import (
     BlockingTicketCreate,
     BlockingTicketRead,
@@ -31,25 +28,14 @@ from app.schemas.ticket import (
     UpdateTicketStatus,
 )
 from app.services.ticket_service import (
-    InvalidStatusTransitionError,
     AssignedUserNotFoundError,
-    InvalidAssignedUserError,
-    MissingStatusChangeReasonError,
-    MissingCategoryChangeReasonError,
-    TicketAlreadyAssignedError,
     TicketCategoryNotFoundError,
+    TicketDependencyNotFoundError,
     TicketNotFoundError,
     TicketPermissionError,
-    TicketTeamAssignmentError,
     TicketTeamNotFoundError,
     TicketTeamPermissionError,
-    InvalidTicketCategoryError,
-    InvalidTicketCategoryChangeError,
-    TicketBlockedByOpenDependenciesError,
-    TicketArchiveError,
-    TicketCommentError,
-    TicketDependencyError,
-    TicketDependencyNotFoundError,
+    TicketServiceError,
     add_ticket_dependency,
     archive_ticket,
     assign_ticket,
@@ -62,21 +48,47 @@ from app.services.ticket_service import (
     get_blocked_tickets_service,
     get_ticket_detail,
     get_ticket_dependencies_service,
+    get_ticket_assignment_history_service,
     get_ticket_category_history_service,
     get_ticket_comments,
+    get_ticket_status_history_service,
     get_ticket_team_history_service,
+    get_tickets_assigned_to_user,
+    get_tickets_created_by_user,
+    get_visible_tickets,
     remove_ticket_dependency,
     unarchive_ticket,
 )
-from app.core.ticket_rules import (
-    can_user_view_assignment_history,
-    can_user_view_status_history,
-)
-from app.services.team_queries import is_team_member
 
 router = APIRouter(prefix="/tickets", tags=["tickets"])
 PaginationSkip = Annotated[int, Query(ge=0)]
 PaginationLimit = Annotated[int, Query(ge=1, le=100)]
+
+
+TICKET_NOT_FOUND_ERRORS = (
+    TicketNotFoundError,
+    AssignedUserNotFoundError,
+    TicketCategoryNotFoundError,
+    TicketDependencyNotFoundError,
+    TicketTeamNotFoundError,
+)
+
+TICKET_PERMISSION_ERRORS = (
+    TicketPermissionError,
+    TicketTeamPermissionError,
+)
+
+
+def _ticket_service_error_to_http(exc: TicketServiceError) -> HTTPException:
+    """Traduce errores del dominio a respuestas HTTP de forma uniforme."""
+
+    if isinstance(exc, TICKET_NOT_FOUND_ERRORS):
+        return HTTPException(status_code=404, detail=str(exc))
+
+    if isinstance(exc, TICKET_PERMISSION_ERRORS):
+        return HTTPException(status_code=403, detail=str(exc))
+
+    return HTTPException(status_code=400, detail=str(exc))
 
 
 # -----------------------------------------------------------------------------
@@ -92,10 +104,8 @@ def create_ticket(
 ):
     try:
         return create_ticket_service(db, ticket, current_user)
-    except TicketCategoryNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except InvalidTicketCategoryError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    except TicketServiceError as exc:
+        raise _ticket_service_error_to_http(exc) from exc
 
 
 @router.get("/created-by-me", response_model=list[TicketRead])
@@ -105,16 +115,7 @@ def get_tickets_created_by_me(
     skip: PaginationSkip = 0,
     limit: PaginationLimit = 20,
 ):
-    # Tickets que el usuario autenticado creo como solicitante.
-    # skip/limit permiten traer el listado por partes y evitan respuestas enormes.
-    return (
-        db.query(Ticket)
-        .filter(Ticket.created_by == current_user.id, Ticket.archived_at.is_(None))
-        .order_by(Ticket.created_at.desc())
-        .offset(skip)
-        .limit(limit)
-        .all()
-    )
+    return get_tickets_created_by_user(db, current_user, skip, limit)
 
 
 @router.get("/assigned-to-me", response_model=list[TicketRead])
@@ -124,16 +125,10 @@ def get_tickets_assigned_to_me(
     skip: PaginationSkip = 0,
     limit: PaginationLimit = 20,
 ):
-    # Tickets que el usuario autenticado tiene asignados como responsable.
-    # El orden estable hace que la pagina 1, 2, 3, etc. sean consistentes.
-    return (
-        db.query(Ticket)
-        .filter(Ticket.assigned_to == current_user.id, Ticket.archived_at.is_(None))
-        .order_by(Ticket.created_at.desc())
-        .offset(skip)
-        .limit(limit)
-        .all()
-    )
+    try:
+        return get_tickets_assigned_to_user(db, current_user, skip, limit)
+    except TicketServiceError as exc:
+        raise _ticket_service_error_to_http(exc) from exc
 
 
 @router.get("/", response_model=list[TicketRead])
@@ -143,20 +138,10 @@ def get_all_tickets(
     skip: PaginationSkip = 0,
     limit: PaginationLimit = 20,
 ):
-    # Esta vista queda reservada para perfiles operativos.
-    # Paginamos el listado general porque puede crecer mucho mas que los listados personales.
-    query = db.query(Ticket).filter(Ticket.archived_at.is_(None)).order_by(Ticket.created_at.desc())
-
-    if current_user.role == UserRole.AGENT:
-        team_ids = select(TeamMember.team_id).where(TeamMember.user_id == current_user.id)
-        query = query.filter(
-            or_(
-                Ticket.assigned_to == current_user.id,
-                Ticket.team_id.in_(team_ids),
-            )
-        )
-
-    return query.offset(skip).limit(limit).all()
+    try:
+        return get_visible_tickets(db, current_user, skip, limit)
+    except TicketServiceError as exc:
+        raise _ticket_service_error_to_http(exc) from exc
 
 
 @router.get("/{ticket_id}", response_model=TicketRead)
@@ -169,10 +154,8 @@ def get_ticket_detail_endpoint(
 
     try:
         return get_ticket_detail(db, ticket_id, current_user)
-    except TicketNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except TicketPermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+    except TicketServiceError as exc:
+        raise _ticket_service_error_to_http(exc) from exc
 
 
 # -----------------------------------------------------------------------------
@@ -189,12 +172,8 @@ def archive_ticket_endpoint(
 ):
     try:
         return archive_ticket(db, ticket_id, current_user, archive_in.reason)
-    except TicketNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except TicketArchiveError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except TicketPermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+    except TicketServiceError as exc:
+        raise _ticket_service_error_to_http(exc) from exc
 
 
 @router.patch("/{ticket_id}/unarchive", response_model=TicketRead)
@@ -205,12 +184,8 @@ def unarchive_ticket_endpoint(
 ):
     try:
         return unarchive_ticket(db, ticket_id, current_user)
-    except TicketNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except TicketArchiveError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except TicketPermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+    except TicketServiceError as exc:
+        raise _ticket_service_error_to_http(exc) from exc
 
 
 # -----------------------------------------------------------------------------
@@ -225,22 +200,10 @@ def update_ticket_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("AGENT", "ADMIN")),
 ):
-    # Busca el ticket concreto que vino en la URL.
-    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
-
-    if not ticket:
-        raise HTTPException(status_code=404, detail="Ticket not found")
-
     try:
-        return change_ticket_status(db, ticket, ticket_update.status, current_user, ticket_update.reason)
-    except (
-        InvalidStatusTransitionError,
-        MissingStatusChangeReasonError,
-        TicketBlockedByOpenDependenciesError,
-    ) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except TicketPermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+        return change_ticket_status(db, ticket_id, ticket_update.status, current_user, ticket_update.reason)
+    except TicketServiceError as exc:
+        raise _ticket_service_error_to_http(exc) from exc
     
 
 @router.patch("/{ticket_id}/assign-team", response_model=TicketRead)
@@ -254,12 +217,8 @@ def ticket_team_assignment(
         # ADMIN asigna cualquier team. Un TEAM LEAD solo puede tomar para su
         # equipo tickets sin team y de categorias asociadas a ese team.
         return assign_ticket_to_team(db, ticket_id, assignment.team_id, current_user)
-    except (TicketNotFoundError, TicketTeamNotFoundError) as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except TicketTeamAssignmentError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except TicketTeamPermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+    except TicketServiceError as exc:
+        raise _ticket_service_error_to_http(exc) from exc
 
 
 @router.patch("/{ticket_id}/category", response_model=TicketRead)
@@ -279,16 +238,8 @@ def update_ticket_category(
             current_user,
             category_update.reason,
         )
-    except (TicketNotFoundError, TicketCategoryNotFoundError) as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except (
-        InvalidTicketCategoryError,
-        InvalidTicketCategoryChangeError,
-        MissingCategoryChangeReasonError,
-    ) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except TicketPermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+    except TicketServiceError as exc:
+        raise _ticket_service_error_to_http(exc) from exc
 
 
 @router.patch("/{ticket_id}/assign", response_model=TicketRead)
@@ -302,14 +253,8 @@ def ticket_assignment(
         # ADMIN tiene alcance global; TEAM LEAD solo opera dentro de su equipo.
         # En ambos casos, el service protege la coherencia entre team y responsable.
         return assign_ticket(db, ticket_id, assignment.assigned_to, current_user)
-    except (TicketNotFoundError, AssignedUserNotFoundError) as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except (TicketAlreadyAssignedError, TicketTeamAssignmentError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except InvalidAssignedUserError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except TicketPermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+    except TicketServiceError as exc:
+        raise _ticket_service_error_to_http(exc) from exc
 
 
 # -----------------------------------------------------------------------------
@@ -333,12 +278,8 @@ def create_ticket_dependency(
             current_user,
             dependency_in.reason,
         )
-    except (TicketNotFoundError, TicketDependencyNotFoundError) as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except TicketDependencyError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except TicketPermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+    except TicketServiceError as exc:
+        raise _ticket_service_error_to_http(exc) from exc
 
 
 @router.get("/{ticket_id}/dependencies", response_model=list[TicketDependencyRead])
@@ -349,10 +290,8 @@ def get_ticket_dependencies(
 ):
     try:
         return get_ticket_dependencies_service(db, ticket_id, current_user)
-    except TicketNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except TicketPermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+    except TicketServiceError as exc:
+        raise _ticket_service_error_to_http(exc) from exc
 
 
 @router.get("/{ticket_id}/blocked-tickets", response_model=list[TicketRead])
@@ -364,10 +303,8 @@ def get_blocked_tickets(
     try:
         # Vista inversa de dependencies: tickets que dependen del ticket actual.
         return get_blocked_tickets_service(db, ticket_id, current_user)
-    except TicketNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except TicketPermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+    except TicketServiceError as exc:
+        raise _ticket_service_error_to_http(exc) from exc
 
 
 @router.patch("/{ticket_id}/dependencies/{dependency_id}/remove", response_model=TicketDependencyRead)
@@ -381,12 +318,8 @@ def remove_ticket_dependency_endpoint(
     try:
         # Soft delete: deja de bloquear, pero conserva quien la removio y por que.
         return remove_ticket_dependency(db, ticket_id, dependency_id, current_user, dependency_remove.reason)
-    except (TicketNotFoundError, TicketDependencyNotFoundError) as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except TicketDependencyError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except TicketPermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+    except TicketServiceError as exc:
+        raise _ticket_service_error_to_http(exc) from exc
 
 
 @router.post("/{ticket_id}/dependencies/create-blocking-ticket", response_model=BlockingTicketRead, status_code=201)
@@ -399,12 +332,8 @@ def create_ticket_blocking_ticket(
     try:
         # Crea el ticket bloqueante, crea la dependencia y deja el ticket actual en ON_HOLD.
         return create_blocking_ticket(db, ticket_id, blocking_ticket_in, current_user)
-    except (TicketNotFoundError, TicketCategoryNotFoundError) as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except (TicketDependencyError, InvalidTicketCategoryError, MissingStatusChangeReasonError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except TicketPermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+    except TicketServiceError as exc:
+        raise _ticket_service_error_to_http(exc) from exc
 
 
 # -----------------------------------------------------------------------------
@@ -423,12 +352,8 @@ def create_ticket_comment_endpoint(
 
     try:
         return create_ticket_comment(db, ticket_id, comment_in, current_user)
-    except TicketNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except TicketPermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
-    except TicketCommentError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    except TicketServiceError as exc:
+        raise _ticket_service_error_to_http(exc) from exc
 
 
 @router.get("/{ticket_id}/comments", response_model=list[TicketCommentRead])
@@ -443,10 +368,8 @@ def get_ticket_comments_endpoint(
 
     try:
         return get_ticket_comments(db, ticket_id, current_user, skip, limit)
-    except TicketNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except TicketPermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+    except TicketServiceError as exc:
+        raise _ticket_service_error_to_http(exc) from exc
 
 
 # -----------------------------------------------------------------------------
@@ -460,27 +383,10 @@ def get_ticket_status_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    # Primero validamos que el ticket exista para no devolver un historial vacio
-    # cuando en realidad el recurso no existe.
-    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
-
-    if not ticket:
-        raise HTTPException(status_code=404, detail="Ticket not found")
-
-    current_user_is_team_member = is_team_member(db, ticket.team_id, current_user.id)
-
-    if not can_user_view_status_history(current_user, ticket, current_user_is_team_member):
-        raise HTTPException(
-            status_code=403,
-            detail="Not enough permissions to view ticket status history",
-        )
-
-    return (
-        db.query(TicketStatusHistory)
-        .filter(TicketStatusHistory.ticket_id == ticket_id)
-        .order_by(TicketStatusHistory.changed_at.desc())
-        .all()
-    )
+    try:
+        return get_ticket_status_history_service(db, ticket_id, current_user)
+    except TicketServiceError as exc:
+        raise _ticket_service_error_to_http(exc) from exc
 
 
 @router.get("/{ticket_id}/category-history", response_model=list[TicketCategoryHistoryRead])
@@ -492,10 +398,8 @@ def get_ticket_category_history(
     try:
         # Misma idea que assignment/team history: es historial operativo interno.
         return get_ticket_category_history_service(db, ticket_id, current_user)
-    except TicketNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except TicketPermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+    except TicketServiceError as exc:
+        raise _ticket_service_error_to_http(exc) from exc
 
 
 @router.get("/{ticket_id}/assignment-history", response_model=list[TicketAssignmentHistoryRead])
@@ -504,26 +408,10 @@ def get_ticket_assignment_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    # Validamos que el ticket exista para no confundir "sin historial"
-    # con "ticket inexistente".
-    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
-
-    if not ticket:
-        raise HTTPException(status_code=404, detail="Ticket not found")
-
-    current_user_is_team_member = is_team_member(db, ticket.team_id, current_user.id)
-    if not can_user_view_assignment_history(current_user, ticket, current_user_is_team_member):
-        raise HTTPException(
-            status_code=403,
-            detail="Not enough permissions to view ticket assignment history",
-        )
-
-    return (
-        db.query(TicketAssignmentHistory)
-        .filter(TicketAssignmentHistory.ticket_id == ticket_id)
-        .order_by(TicketAssignmentHistory.changed_at.desc())
-        .all()
-    )
+    try:
+        return get_ticket_assignment_history_service(db, ticket_id, current_user)
+    except TicketServiceError as exc:
+        raise _ticket_service_error_to_http(exc) from exc
 
 
 @router.get("/{ticket_id}/team-history", response_model=list[TicketTeamHistoryRead])
@@ -535,7 +423,5 @@ def get_ticket_team_history(
     try:
         # El service resuelve existencia, permisos y consulta del historial.
         return get_ticket_team_history_service(db, ticket_id, current_user)
-    except TicketNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except TicketPermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+    except TicketServiceError as exc:
+        raise _ticket_service_error_to_http(exc) from exc

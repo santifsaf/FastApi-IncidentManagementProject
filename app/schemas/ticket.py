@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.models.ticket import TicketCommentVisibility, TicketPriority, TicketStatus
 
-#SCHEMAS GLOBALES DE TICKET
+# SCHEMAS GLOBALES DE TICKET
 class TicketCreate(BaseModel):
     title: str
     description: str
@@ -32,10 +32,11 @@ class TicketRead(BaseModel):
     archive_reason: Optional[str] = None
 
 
-#SCHEMAS DEL ESTADO DEL TICKET
+# SCHEMAS DEL ESTADO DEL TICKET
 class UpdateTicketStatus(BaseModel):
     status: TicketStatus
     reason: Optional[str] = None
+
 
 class TicketStatusHistoryRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -47,9 +48,9 @@ class TicketStatusHistoryRead(BaseModel):
     changed_at: datetime
 
 
-#SCHEMAS DE ASIGNACION
+# SCHEMAS DE ASIGNACION
 class TicketAssignmentUpdate(BaseModel):
-    assigned_to:UUID 
+    assigned_to: UUID
 
 
 class TicketTeamAssignmentUpdate(BaseModel):
