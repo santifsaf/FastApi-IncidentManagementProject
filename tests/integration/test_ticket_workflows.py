@@ -135,7 +135,18 @@ def test_status_change_persists_ticket_and_history_atomically(integration_db):
     # El AGENT debe estar asignado directamente para poder cambiar el estado.
     agent = _create_user(integration_db, UserRole.AGENT)
     category = _create_category(integration_db)
-    ticket = _create_ticket(integration_db, agent, category, assigned_to=agent.id)
+    team = Team(name=f"Team {uuid4()}")
+    integration_db.add(team)
+    integration_db.flush()
+    integration_db.add(TeamMember(team_id=team.id, user_id=agent.id))
+    integration_db.flush()
+    ticket = _create_ticket(
+        integration_db,
+        agent,
+        category,
+        team_id=team.id,
+        assigned_to=agent.id,
+    )
 
     result = change_ticket_status(
         integration_db,

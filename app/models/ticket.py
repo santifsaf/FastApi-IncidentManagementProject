@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, Enum as SqlEnum, ForeignKey, Index, String, Text, func
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, Enum as SqlEnum, ForeignKey, Index, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -32,6 +32,13 @@ class TicketCommentVisibility(str, Enum):
 
 class Ticket(Base):
     __tablename__ = "tickets"
+    __table_args__ = (
+        # Un responsable siempre trabaja dentro del equipo asignado al ticket.
+        CheckConstraint(
+            "assigned_to IS NULL OR team_id IS NOT NULL",
+            name="ck_tickets_assigned_requires_team",
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     title = Column(String, nullable=False)

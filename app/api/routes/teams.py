@@ -111,7 +111,8 @@ def add_team_member(
     current_user: User = Depends(require_roles("ADMIN")),
 ):
     try:
-        # El service valida que el team exista, que el usuario exista y que sea AGENT activo.
+        # El service valida que el team exista y que el miembro sea AGENT o ADMIN activo.
+        # Agregar una membresia no convierte automaticamente al usuario en TeamLead.
         return add_team_member_service(db, team_id, member_in.user_id)
     except TeamServiceError as exc:
         raise _team_service_error_to_http(exc) from exc

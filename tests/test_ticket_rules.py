@@ -41,7 +41,7 @@ class FakeTicket:
     [
         ("ADMIN", "AGENT", True),
         ("ADMIN", "USER", False),
-        ("ADMIN", "ADMIN", False),
+        ("ADMIN", "ADMIN", True),
         ("AGENT", "AGENT", False),
         ("USER", "AGENT", False),
     ],
@@ -49,8 +49,14 @@ class FakeTicket:
 def test_can_user_assign_ticket_by_role(current_role, assigned_role, expected):
     current_user = FakeUser(role=current_role)
     assigned_user = FakeUser(role=assigned_role)
+    ticket = FakeTicket(team_id="team-id")
 
-    result = can_user_assign_ticket(current_user, assigned_user)
+    result = can_user_assign_ticket(
+        current_user,
+        assigned_user,
+        ticket,
+        is_assigned_user_team_member=True,
+    )
 
     assert result is expected
 
@@ -85,6 +91,62 @@ def test_team_lead_cannot_assign_ticket_to_agent_outside_team():
     )
 
     assert result is False
+
+
+def test_admin_cannot_assign_teamless_ticket_to_active_agent():
+    current_user = FakeUser(role="ADMIN", id="admin-id")
+    assigned_user = FakeUser(role="AGENT", id="agent-id")
+    ticket = FakeTicket(team_id=None)
+
+    result = can_user_assign_ticket(current_user, assigned_user, ticket)
+
+    assert result is False
+
+
+def test_admin_can_assign_ticket_to_member_of_its_team():
+    current_user = FakeUser(role="ADMIN", id="admin-id")
+    assigned_user = FakeUser(role="AGENT", id="agent-id")
+    ticket = FakeTicket(team_id="team-id")
+
+    result = can_user_assign_ticket(
+        current_user,
+        assigned_user,
+        ticket,
+        is_assigned_user_team_member=True,
+    )
+
+    assert result is True
+
+
+def test_admin_cannot_assign_ticket_to_agent_outside_its_team():
+    current_user = FakeUser(role="ADMIN", id="admin-id")
+    assigned_user = FakeUser(role="AGENT", id="agent-id")
+    ticket = FakeTicket(team_id="team-id")
+
+    result = can_user_assign_ticket(
+        current_user,
+        assigned_user,
+        ticket,
+        is_assigned_user_team_member=False,
+    )
+
+    assert result is False
+
+
+def test_team_lead_can_assign_ticket_to_admin_member_of_team():
+    current_user = FakeUser(role="AGENT", id="lead-id")
+    assigned_user = FakeUser(role="ADMIN", id="admin-id")
+    ticket = FakeTicket(team_id="team-id")
+
+    result = can_user_assign_ticket(
+        current_user,
+        assigned_user,
+        ticket,
+        is_current_user_team_lead=True,
+        is_assigned_user_team_member=True,
+    )
+
+    assert result is True
 
 
 def test_cannot_assign_ticket_to_missing_user():

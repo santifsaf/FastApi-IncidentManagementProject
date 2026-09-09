@@ -12,9 +12,11 @@ import pytest
 from app.models.team import Team, TeamLead, TeamMember
 from app.models.user import User
 from app.services.team_service import (
+    InvalidTeamMemberError,
     InvalidTeamLeadError,
     InvalidTeamNameError,
     TeamLeadRemovalError,
+    add_team_member_service,
     add_team_lead_service,
     create_team_service,
     get_team_leads_service,
@@ -118,6 +120,22 @@ def test_create_team_service_creates_team_and_adds_lead_as_member():
     assert member.user_id == lead_user.id
 
 
+def test_create_team_service_accepts_active_admin_as_initial_lead():
+    team_in = SimpleNamespace(name="Infrastructure", lead_id=uuid4())
+    lead_user = SimpleNamespace(id=team_in.lead_id, role="ADMIN", is_active=True)
+    db = FakeDb(lead_user=lead_user)
+
+    result = create_team_service(db, team_in)
+
+    assert isinstance(result, Team)
+    assert isinstance(db.added[1], TeamLead)
+    assert db.added[1].user_id == lead_user.id
+    # Todo lead tambien queda registrado como miembro del equipo.
+    assert isinstance(db.added[2], TeamMember)
+    assert db.added[2].user_id == lead_user.id
+    assert db.committed is True
+
+
 def test_add_team_lead_service_creates_lead_and_member_if_needed():
     team = SimpleNamespace(id=uuid4())
     new_lead_user = SimpleNamespace(id=uuid4(), role="AGENT", is_active=True)
@@ -134,6 +152,19 @@ def test_add_team_lead_service_creates_lead_and_member_if_needed():
     assert db.refreshed is result
 
 
+def test_add_team_lead_service_accepts_active_admin():
+    team = SimpleNamespace(id=uuid4())
+    admin = SimpleNamespace(id=uuid4(), role="ADMIN", is_active=True)
+    db = FakeDb(existing_team=team, lead_user=admin, existing_lead=None, existing_member=None)
+
+    result = add_team_lead_service(db, team.id, admin.id)
+
+    assert isinstance(result, TeamLead)
+    assert result.user_id == admin.id
+    assert isinstance(db.added[1], TeamMember)
+    assert db.committed is True
+
+
 def test_get_team_leads_service_returns_team_leads():
     team = SimpleNamespace(id=uuid4())
     leads = [
@@ -145,6 +176,60 @@ def test_get_team_leads_service_returns_team_leads():
     result = get_team_leads_service(db, team.id)
 
     assert result == leads
+
+
+def test_add_team_member_service_accepts_active_agent():
+    team = SimpleNamespace(id=uuid4())
+    agent = SimpleNamespace(id=uuid4(), role="AGENT", is_active=True)
+    db = FakeDb(existing_team=team, lead_user=agent, existing_member=None)
+
+    result = add_team_member_service(db, team.id, agent.id)
+
+    assert isinstance(result, TeamMember)
+    assert result.team_id == team.id
+    assert result.user_id == agent.id
+    assert db.added == [result]
+    assert db.committed is True
+
+
+def test_add_team_member_service_accepts_active_admin_without_making_it_lead():
+    team = SimpleNamespace(id=uuid4())
+    admin = SimpleNamespace(id=uuid4(), role="ADMIN", is_active=True)
+    db = FakeDb(existing_team=team, lead_user=admin, existing_member=None)
+
+    result = add_team_member_service(db, team.id, admin.id)
+
+    assert isinstance(result, TeamMember)
+    assert result.team_id == team.id
+    assert result.user_id == admin.id
+    # El service agrega solo la membresia; no crea una responsabilidad de lead.
+    assert db.added == [result]
+    assert not any(isinstance(item, TeamLead) for item in db.added)
+    assert db.committed is True
+
+
+def test_add_team_member_service_rejects_requester_user():
+    team = SimpleNamespace(id=uuid4())
+    requester = SimpleNamespace(id=uuid4(), role="USER", is_active=True)
+    db = FakeDb(existing_team=team, lead_user=requester, existing_member=None)
+
+    with pytest.raises(InvalidTeamMemberError, match="agent or administrator"):
+        add_team_member_service(db, team.id, requester.id)
+
+    assert db.added == []
+    assert db.committed is False
+
+
+def test_add_team_member_service_rejects_inactive_admin():
+    team = SimpleNamespace(id=uuid4())
+    admin = SimpleNamespace(id=uuid4(), role="ADMIN", is_active=False)
+    db = FakeDb(existing_team=team, lead_user=admin, existing_member=None)
+
+    with pytest.raises(InvalidTeamMemberError, match="Inactive users"):
+        add_team_member_service(db, team.id, admin.id)
+
+    assert db.added == []
+    assert db.committed is False
 
 
 def test_remove_team_lead_service_rejects_last_team_lead():
@@ -186,12 +271,23 @@ def test_remove_team_member_service_rejects_additional_lead():
     assert db.committed is False
 
 
-def test_create_team_service_rejects_non_agent_lead():
+def test_create_team_service_rejects_user_as_lead():
     team_in = SimpleNamespace(name="Support", lead_id=uuid4())
     lead_user = SimpleNamespace(id=team_in.lead_id, role="USER", is_active=True)
     db = FakeDb(lead_user=lead_user)
 
-    with pytest.raises(InvalidTeamLeadError, match="Team lead must be an agent"):
+    with pytest.raises(InvalidTeamLeadError, match="agent or administrator"):
+        create_team_service(db, team_in)
+
+    assert db.added == []
+
+
+def test_create_team_service_rejects_inactive_admin_lead():
+    team_in = SimpleNamespace(name="Support", lead_id=uuid4())
+    lead_user = SimpleNamespace(id=team_in.lead_id, role="ADMIN", is_active=False)
+    db = FakeDb(lead_user=lead_user)
+
+    with pytest.raises(InvalidTeamLeadError, match="Inactive users"):
         create_team_service(db, team_in)
 
     assert db.added == []

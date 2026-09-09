@@ -8,6 +8,14 @@ from app.models.user import User, UserRole
 from app.schemas.team import TeamCreate
 
 
+# Un lead puede ser un agente operativo o un administrador que tambien
+# coordina el trabajo cotidiano de un equipo.
+TEAM_LEAD_ROLES = {UserRole.AGENT, UserRole.ADMIN}
+
+# La membresia indica que el usuario trabaja en el equipo; no implica que lo lidere.
+TEAM_MEMBER_ROLES = {UserRole.AGENT, UserRole.ADMIN}
+
+
 class TeamServiceError(Exception):
     pass
 
@@ -72,7 +80,7 @@ def create_team_service(db: Session, team_in: TeamCreate) -> Team:
     """Crea un equipo y registra su primer lead.
 
     Esta funcion representa el caso de uso completo: normaliza el nombre,
-    busca el lead inicial, valida que sea AGENT activo y persiste todo junto.
+    busca el lead inicial, valida que sea AGENT o ADMIN activo y persiste todo junto.
     El lead vive en TeamLead; Team ya no guarda una columna lead_id propia.
     """
 
@@ -86,8 +94,8 @@ def create_team_service(db: Session, team_in: TeamCreate) -> Team:
     if lead_user is None:
         raise TeamLeadNotFoundError("Team lead not found")
 
-    if lead_user.role != UserRole.AGENT:
-        raise InvalidTeamLeadError("Team lead must be an agent")
+    if lead_user.role not in TEAM_LEAD_ROLES:
+        raise InvalidTeamLeadError("Team lead must be an agent or administrator")
 
     if not lead_user.is_active:
         raise InvalidTeamLeadError("Inactive users cannot lead a team")
@@ -128,8 +136,8 @@ def add_team_lead_service(db: Session, team_id: UUID, user_id: UUID) -> TeamLead
     if user is None:
         raise UserNotFoundError("User not found")
 
-    if user.role != UserRole.AGENT:
-        raise InvalidTeamLeadError("Team lead must be an agent")
+    if user.role not in TEAM_LEAD_ROLES:
+        raise InvalidTeamLeadError("Team lead must be an agent or administrator")
 
     if not user.is_active:
         raise InvalidTeamLeadError("Inactive users cannot lead a team")
@@ -211,7 +219,7 @@ def remove_team_lead_service(db: Session, team_id: UUID, user_id: UUID) -> None:
 
 
 def add_team_member_service(db: Session, team_id: UUID, user_id: UUID) -> TeamMember:
-    """Agrega un AGENT activo a un equipo existente."""
+    """Agrega un AGENT o ADMIN activo a un equipo existente."""
 
     team = db.query(Team).filter(Team.id == team_id).first()
     if team is None:
@@ -221,8 +229,8 @@ def add_team_member_service(db: Session, team_id: UUID, user_id: UUID) -> TeamMe
     if user is None:
         raise UserNotFoundError("User not found")
 
-    if user.role != UserRole.AGENT:
-        raise InvalidTeamMemberError("Only agents can be team members")
+    if user.role not in TEAM_MEMBER_ROLES:
+        raise InvalidTeamMemberError("Team member must be an agent or administrator")
 
     if not user.is_active:
         raise InvalidTeamMemberError("Inactive users cannot join a team")

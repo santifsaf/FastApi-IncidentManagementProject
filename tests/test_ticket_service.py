@@ -463,10 +463,11 @@ def test_assign_ticket_updates_ticket_and_creates_history():
 
     # SimpleNamespace crea objetos simples con atributos.
     # Lo usamos para no depender de SQLAlchemy ni de una base real.
+    team_id = uuid4()
     ticket = SimpleNamespace(
         id=uuid4(),
         assigned_to=old_assigned_id,
-        team_id=None,
+        team_id=team_id,
     )
 
     # Usuario que realiza la accion.
@@ -481,7 +482,11 @@ def test_assign_ticket_updates_ticket_and_creates_history():
         role="AGENT",
         is_active=True,
     )
-    db = TeamAwareFakeDb(ticket=ticket, assigned_user=assigned_user)
+    db = TeamAwareFakeDb(
+        ticket=ticket,
+        assigned_user=assigned_user,
+        member=SimpleNamespace(team_id=team_id, user_id=assigned_user.id),
+    )
 
     result = assign_ticket(db, ticket.id, assigned_user.id, current_user)
 
@@ -520,6 +525,20 @@ def test_assign_ticket_updates_ticket_and_creates_history():
     assert history.changed_by == current_user.id
 
 
+def test_cannot_assign_teamless_ticket_to_active_admin():
+    ticket = SimpleNamespace(id=uuid4(), assigned_to=None, team_id=None)
+    current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
+    assigned_admin = SimpleNamespace(id=uuid4(), role="ADMIN", is_active=True)
+    db = TeamAwareFakeDb(ticket=ticket, assigned_user=assigned_admin)
+
+    with pytest.raises(TicketTeamAssignmentError, match="must belong to a team"):
+        assign_ticket(db, ticket.id, assigned_admin.id, current_user)
+
+    assert ticket.assigned_to is None
+    assert db.added == []
+    assert db.committed is False
+
+
 def test_assign_ticket_raises_permission_error_when_user_cannot_assign():
     """
     Caso invalido:
@@ -530,10 +549,11 @@ def test_assign_ticket_raises_permission_error_when_user_cannot_assign():
     - No crea historial.
     """
 
+    team_id = uuid4()
     ticket = SimpleNamespace(
         id=uuid4(),
         assigned_to=None,
-        team_id=None,
+        team_id=team_id,
     )
 
     current_user = SimpleNamespace(
@@ -546,7 +566,11 @@ def test_assign_ticket_raises_permission_error_when_user_cannot_assign():
         role="AGENT",
         is_active=True,
     )
-    db = TeamAwareFakeDb(ticket=ticket, assigned_user=assigned_user)
+    db = TeamAwareFakeDb(
+        ticket=ticket,
+        assigned_user=assigned_user,
+        member=SimpleNamespace(team_id=team_id, user_id=assigned_user.id),
+    )
 
     with pytest.raises(TicketPermissionError):
         assign_ticket(db, ticket.id, assigned_user.id, current_user)
@@ -573,10 +597,11 @@ def test_assign_ticket_raises_value_error_when_agent_is_already_assigned():
 
     assigned_user_id = uuid4()
 
+    team_id = uuid4()
     ticket = SimpleNamespace(
         id=uuid4(),
         assigned_to=assigned_user_id,
-        team_id=None,
+        team_id=team_id,
     )
 
     current_user = SimpleNamespace(
@@ -589,7 +614,11 @@ def test_assign_ticket_raises_value_error_when_agent_is_already_assigned():
         role="AGENT",
         is_active=True,
     )
-    db = TeamAwareFakeDb(ticket=ticket, assigned_user=assigned_user)
+    db = TeamAwareFakeDb(
+        ticket=ticket,
+        assigned_user=assigned_user,
+        member=SimpleNamespace(team_id=team_id, user_id=assigned_user.id),
+    )
 
     with pytest.raises(TicketAlreadyAssignedError, match="Ticket already assigned"):
         assign_ticket(db, ticket.id, assigned_user.id, current_user)
@@ -602,10 +631,11 @@ def test_assign_ticket_raises_value_error_when_agent_is_already_assigned():
 
 
 def test_assign_ticket_rejects_inactive_agent():
+    team_id = uuid4()
     ticket = SimpleNamespace(
         id=uuid4(),
         assigned_to=None,
-        team_id=None,
+        team_id=team_id,
     )
     current_user = SimpleNamespace(
         id=uuid4(),
@@ -626,15 +656,30 @@ def test_assign_ticket_rejects_inactive_agent():
     assert db.committed is False
 
 
+def test_assign_ticket_rejects_inactive_admin():
+    ticket = SimpleNamespace(id=uuid4(), assigned_to=None, team_id=uuid4())
+    current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
+    assigned_admin = SimpleNamespace(id=uuid4(), role="ADMIN", is_active=False)
+    db = TeamAwareFakeDb(ticket=ticket, assigned_user=assigned_admin)
+
+    with pytest.raises(InvalidAssignedUserError, match="must be active"):
+        assign_ticket(db, ticket.id, assigned_admin.id, current_user)
+
+    assert ticket.assigned_to is None
+    assert db.added == []
+    assert db.committed is False
+
+
 def test_assign_ticket_rolls_back_when_commit_fails():
     """
     Si falla la persistencia, el service debe limpiar la sesion.
     """
 
+    team_id = uuid4()
     ticket = SimpleNamespace(
         id=uuid4(),
         assigned_to=None,
-        team_id=None,
+        team_id=team_id,
     )
 
     current_user = SimpleNamespace(
@@ -647,7 +692,11 @@ def test_assign_ticket_rolls_back_when_commit_fails():
         role="AGENT",
         is_active=True,
     )
-    db = FailingTeamAwareFakeDb(ticket=ticket, assigned_user=assigned_user)
+    db = FailingTeamAwareFakeDb(
+        ticket=ticket,
+        assigned_user=assigned_user,
+        member=SimpleNamespace(team_id=team_id, user_id=assigned_user.id),
+    )
 
     with pytest.raises(RuntimeError, match="Commit failed"):
         assign_ticket(db, ticket.id, assigned_user.id, current_user)
@@ -676,6 +725,63 @@ def test_team_lead_assigns_ticket_to_team_member():
     assert ticket.assigned_to == assigned_user_id
     assert db.committed is True
     assert isinstance(db.added[0], TicketAssignmentHistory)
+
+
+def test_admin_assigns_ticket_to_team_member():
+    team_id = uuid4()
+    assigned_user_id = uuid4()
+    ticket = SimpleNamespace(id=uuid4(), assigned_to=None, team_id=team_id)
+    assigned_user = SimpleNamespace(id=assigned_user_id, role="AGENT", is_active=True)
+    db = TeamAwareFakeDb(
+        ticket=ticket,
+        assigned_user=assigned_user,
+        member=SimpleNamespace(team_id=team_id, user_id=assigned_user_id),
+    )
+    current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
+
+    result = assign_ticket(db, ticket.id, assigned_user.id, current_user)
+
+    assert result is ticket
+    assert ticket.assigned_to == assigned_user_id
+    assert db.committed is True
+    assert isinstance(db.added[0], TicketAssignmentHistory)
+
+
+def test_team_lead_assigns_ticket_to_admin_member():
+    team_id = uuid4()
+    lead_id = uuid4()
+    assigned_admin_id = uuid4()
+    ticket = SimpleNamespace(id=uuid4(), assigned_to=None, team_id=team_id)
+    assigned_admin = SimpleNamespace(id=assigned_admin_id, role="ADMIN", is_active=True)
+    db = TeamAwareFakeDb(
+        ticket=ticket,
+        assigned_user=assigned_admin,
+        team_lead=SimpleNamespace(id=uuid4(), team_id=team_id, user_id=lead_id),
+        member=SimpleNamespace(team_id=team_id, user_id=assigned_admin_id),
+    )
+    current_user = SimpleNamespace(id=lead_id, role="AGENT")
+
+    result = assign_ticket(db, ticket.id, assigned_admin.id, current_user)
+
+    assert result is ticket
+    assert ticket.assigned_to == assigned_admin_id
+    assert db.committed is True
+    assert isinstance(db.added[0], TicketAssignmentHistory)
+
+
+def test_admin_cannot_assign_ticket_to_agent_outside_team():
+    team_id = uuid4()
+    ticket = SimpleNamespace(id=uuid4(), assigned_to=None, team_id=team_id)
+    assigned_user = SimpleNamespace(id=uuid4(), role="AGENT", is_active=True)
+    db = TeamAwareFakeDb(ticket=ticket, assigned_user=assigned_user, member=None)
+    current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
+
+    with pytest.raises(TicketPermissionError, match="invalid assignment"):
+        assign_ticket(db, ticket.id, assigned_user.id, current_user)
+
+    assert ticket.assigned_to is None
+    assert db.added == []
+    assert db.committed is False
 
 
 def test_assign_ticket_to_team_updates_ticket_team():

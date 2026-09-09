@@ -850,15 +850,18 @@ def create_blocking_ticket(
 
 
 def assign_ticket(db: Session, ticket_id: UUID, assigned_user_id: UUID, current_user: User) -> Ticket:
-    """Asigna un ticket a un agente.
+    """Asigna un ticket a un responsable operativo activo.
 
-    ADMIN puede asignar libremente. Un AGENT solo puede hacerlo si es lead
-    del equipo del ticket y el agente destino pertenece al mismo equipo.
+    El ticket debe pertenecer primero a un team y el responsable, AGENT o
+    ADMIN, debe ser miembro. Un AGENT que asigna tambien debe ser lead.
     """
 
     ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
     if ticket is None:
         raise TicketNotFoundError("Ticket not found")
+
+    if ticket.team_id is None:
+        raise TicketTeamAssignmentError("Ticket must belong to a team before assigning a responsible user")
 
     assigned_user = db.query(User).filter(User.id == assigned_user_id).first()
     if assigned_user is None:

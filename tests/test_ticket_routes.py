@@ -16,6 +16,7 @@ from app.services.ticket_service import (
     TicketCommentNotAllowedError,
     TicketNotFoundError,
     TicketPermissionError,
+    TicketTeamAssignmentError,
 )
 
 
@@ -223,6 +224,34 @@ def test_get_ticket_detail_endpoint_maps_permission_error_to_403(
 
     assert response.status_code == 403
     assert response.json()["detail"] == "Not enough permissions to view ticket"
+
+
+def test_assign_ticket_endpoint_requires_team_before_responsible(
+    client,
+    monkeypatch,
+    override_current_user,
+    override_db,
+):
+    admin = SimpleNamespace(id=uuid4(), role=UserRole.ADMIN, is_active=True)
+    ticket_id = uuid4()
+    assigned_user_id = uuid4()
+    override_current_user(admin)
+    override_db()
+
+    from app.api.routes import tickets as tickets_routes
+
+    def fake_assign_ticket(db, current_ticket_id, current_assigned_user_id, current_user):
+        raise TicketTeamAssignmentError("Ticket must belong to a team before assigning a responsible user")
+
+    monkeypatch.setattr(tickets_routes, "assign_ticket", fake_assign_ticket)
+
+    response = client.patch(
+        f"/tickets/{ticket_id}/assign",
+        json={"assigned_to": str(assigned_user_id)},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Ticket must belong to a team before assigning a responsible user"
 
 
 def test_status_history_endpoint_returns_403_for_unauthorized_user(client, override_current_user, override_db):

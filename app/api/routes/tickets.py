@@ -299,11 +299,12 @@ def ticket_assignment(
     current_user: User = Depends(require_roles("ADMIN", "AGENT")),
 ):
     try:
-        # ADMIN asigna libremente; TEAM LEAD solo dentro de su equipo.
+        # ADMIN tiene alcance global; TEAM LEAD solo opera dentro de su equipo.
+        # En ambos casos, el service protege la coherencia entre team y responsable.
         return assign_ticket(db, ticket_id, assignment.assigned_to, current_user)
     except (TicketNotFoundError, AssignedUserNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc))
-    except TicketAlreadyAssignedError as exc:
+    except (TicketAlreadyAssignedError, TicketTeamAssignmentError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except InvalidAssignedUserError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

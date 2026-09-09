@@ -2,6 +2,10 @@ from app.models.ticket import TicketCommentVisibility, TicketStatus
 from app.models.user import UserRole
 
 
+# Estos roles pueden asumir la responsabilidad operativa de un ticket.
+ASSIGNABLE_USER_ROLES = {UserRole.AGENT, UserRole.ADMIN}
+
+
 # Flujo basico permitido para cambios de estado.
 ALLOWED_TRANSITIONS = {
     TicketStatus.OPEN: {TicketStatus.IN_PROGRESS, TicketStatus.ON_HOLD, TicketStatus.RESOLVED},
@@ -56,8 +60,17 @@ def can_user_assign_ticket(
     is_current_user_team_lead: bool = False,
     is_assigned_user_team_member: bool = False,
 ) -> bool:
-    # La asignacion siempre requiere un usuario destino agente.
-    if assigned_user is None or assigned_user.role != UserRole.AGENT:
+    # USER representa al solicitante; solo AGENT y ADMIN pueden resolver tickets.
+    if assigned_user is None or assigned_user.role not in ASSIGNABLE_USER_ROLES:
+        return False
+
+    # Un ticket debe ingresar primero a un equipo. Ningun rol, incluido ADMIN,
+    # puede asignar una persona directamente desde la cola de categoria.
+    if ticket is None or ticket.team_id is None:
+        return False
+
+    # El responsable debe pertenecer al equipo que atiende el ticket.
+    if not is_assigned_user_team_member:
         return False
 
     if current_user.role == UserRole.ADMIN:
@@ -69,7 +82,6 @@ def can_user_assign_ticket(
         and ticket is not None
         and ticket.team_id is not None
         and is_current_user_team_lead
-        and is_assigned_user_team_member
     ):
         return True
 
