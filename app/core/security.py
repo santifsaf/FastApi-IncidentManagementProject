@@ -19,11 +19,15 @@ def _validate_bcrypt_password_length(password: str) -> None:
 
 
 def hash_password(password: str) -> str:
+    """Valida y transforma una contraseña plana en un hash bcrypt."""
+
     _validate_bcrypt_password_length(password)
     return pwd_context.hash(password)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Compara una contraseña plana con un hash almacenado."""
+
     # Si supera el límite de bcrypt, la tratamos como contraseña inválida.
     if len(plain_password.encode("utf-8")) > 72:
         return False
@@ -31,10 +35,14 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 def normalize_email(email: str) -> str:
+    """Normaliza el email usado para búsquedas y restricciones de unicidad."""
+
     return email.strip().lower()
 
 
 def create_access_token(subject: str) -> str:
+    """Genera un JWT de acceso para la identidad recibida en ``subject``."""
+
     now = datetime.now(timezone.utc)
     expire = now + timedelta(minutes=settings.access_token_expire_minutes)
 
@@ -44,6 +52,8 @@ def create_access_token(subject: str) -> str:
 
 
 def decode_access_token(token: str) -> TokenPayload:
+    """Valida firma y claims obligatorios, y devuelve un payload tipado."""
+
     decoded = jwt.decode(
         token,
         settings.secret_key,

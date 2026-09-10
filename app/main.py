@@ -1,4 +1,8 @@
-from contextlib import asynccontextmanager
+"""Punto de entrada de FastAPI.
+
+La estructura de la base de datos se administra exclusivamente con Alembic;
+la aplicacion no crea ni modifica tablas durante el arranque.
+"""
 
 from fastapi import FastAPI
 
@@ -8,23 +12,10 @@ from app.api.routes.teams import router as teams_router
 from app.api.routes.tickets import router as tickets_router
 from app.api.routes.users import router as users_router
 from app.core.config import settings
-#from app.db.base import Base
-#from app.db.session import engine                  ESTO ESTA COMENTADO PORQUE ESTAMOS USANDO ALEMBIC 
-#from app.models.ticket import Ticket
-#from app.models.user import User
-
-
-# @asynccontextmanager
-# async def lifespan(app: FastAPI):
-    # Asegura que SQLAlchemy conozca los modelos importados y cree las tablas
-    # faltantes cuando la aplicación arranca.
-    #Base.metadata.create_all(bind=engine) ESTO ESTA COMENTADO PORQUE ESTAMOS USANDO ALEMBIC 
-#     yield
 
 
 app = FastAPI(
-     title=settings.app_name,
-    #  lifespan=lifespan,
+    title=settings.app_name,
 )
 
 app.include_router(auth_router)

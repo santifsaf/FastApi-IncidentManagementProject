@@ -9,10 +9,11 @@ from uuid import uuid4
 
 import pytest
 
-from app.models.team import Team, TeamLead, TeamMember
+from app.models.team import AssignmentStrategy, Team, TeamLead, TeamMember
 from app.models.user import User
 from app.services.team_service import (
     InvalidTeamMemberError,
+    InvalidTeamAssignmentSettingsError,
     InvalidTeamLeadError,
     InvalidTeamNameError,
     TeamLeadRemovalError,
@@ -22,6 +23,7 @@ from app.services.team_service import (
     get_team_leads_service,
     remove_team_lead_service,
     remove_team_member_service,
+    update_team_auto_assignment_service,
     update_team_self_assignment_service,
 )
 
@@ -148,6 +150,45 @@ def test_admin_configuration_enables_team_self_assignment():
     assert team.self_assignment_enabled is True
     assert db.committed is True
     assert db.refreshed is team
+
+
+def test_admin_configuration_updates_team_auto_assignment():
+    team = SimpleNamespace(
+        id=uuid4(),
+        auto_assignment_enabled=False,
+        auto_assignment_delay_minutes=0,
+        assignment_strategy=AssignmentStrategy.LEAST_ACTIVE,
+    )
+    db = FakeDb(existing_team=team)
+
+    result = update_team_auto_assignment_service(
+        db,
+        team.id,
+        True,
+        20,
+        AssignmentStrategy.LONGEST_IDLE,
+    )
+
+    assert result is team
+    assert team.auto_assignment_enabled is True
+    assert team.auto_assignment_delay_minutes == 20
+    assert team.assignment_strategy == AssignmentStrategy.LONGEST_IDLE
+    assert db.committed is True
+
+
+def test_team_auto_assignment_service_rejects_negative_delay():
+    db = FakeDb(existing_team=SimpleNamespace(id=uuid4()))
+
+    with pytest.raises(InvalidTeamAssignmentSettingsError, match="cannot be negative"):
+        update_team_auto_assignment_service(
+            db,
+            uuid4(),
+            True,
+            -1,
+            AssignmentStrategy.LEAST_ACTIVE,
+        )
+
+    assert db.committed is False
 
 
 def test_add_team_lead_service_creates_lead_and_member_if_needed():

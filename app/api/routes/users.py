@@ -1,3 +1,5 @@
+"""Endpoints HTTP para consultar y crear usuarios."""
+
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,12 +19,15 @@ def get_users(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("ADMIN")),
 ):
+    """Lista usuarios; operación reservada a administradores."""
+
     return db.query(User).all()
 
 
 @router.get("/me", response_model=UserRead)
 def get_me(current_user: User = Depends(get_current_active_user)):
-    # La dependencia resuelve el usuario autenticado y verifica que esté activo.
+    """Devuelve el usuario autenticado y activo."""
+
     return current_user
 
 
@@ -32,6 +37,8 @@ def get_user(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    """Permite consultar el usuario propio o cualquier usuario siendo admin."""
+
     if current_user.role != UserRole.ADMIN and current_user.id != user_id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
 
@@ -49,6 +56,8 @@ def create_user(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("ADMIN")),
 ):
+    """Crea un usuario; operación reservada a administradores."""
+
     try:
         return create_user_service(db, user)
     except UserServiceError as exc:

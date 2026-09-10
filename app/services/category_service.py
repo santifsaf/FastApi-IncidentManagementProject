@@ -1,3 +1,5 @@
+"""Casos de uso para administrar categorías y su cola de tickets."""
+
 from uuid import UUID
 
 from sqlalchemy import func
@@ -56,6 +58,8 @@ def _normalize_category_name(name: str) -> str:
 
 
 def create_category_service(db: Session, category_in: TicketCategoryCreate) -> TicketCategory:
+    """Crea una categoría activa y rechaza nombres equivalentes ya registrados."""
+
     normalized_name = _normalize_category_name(category_in.name)
 
     existing_category = (
@@ -86,6 +90,8 @@ def create_category_service(db: Session, category_in: TicketCategoryCreate) -> T
 
 
 def add_category_team_service(db: Session, category_id: UUID, team_id: UUID) -> CategoryTeam:
+    """Habilita a un equipo existente para atender una categoría activa."""
+
     category = db.query(TicketCategory).filter(TicketCategory.id == category_id).first()
     if category is None:
         raise CategoryNotFoundError("Category not found")

@@ -1,9 +1,11 @@
+"""Casos de uso para equipos, miembros, leads y políticas de asignación."""
+
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models.team import Team, TeamLead, TeamMember
+from app.models.team import AssignmentStrategy, Team, TeamLead, TeamMember
 from app.models.user import User, UserRole
 from app.schemas.team import TeamCreate
 
@@ -65,6 +67,10 @@ class TeamLeadAlreadyExistsError(TeamServiceError):
 
 
 class TeamDataConflictError(TeamServiceError):
+    pass
+
+
+class InvalidTeamAssignmentSettingsError(TeamServiceError):
     pass
 
 
@@ -178,6 +184,8 @@ def add_team_lead_service(db: Session, team_id: UUID, user_id: UUID) -> TeamLead
 
 
 def get_team_leads_service(db: Session, team_id: UUID) -> list[TeamLead]:
+    """Lista los leads del equipo en el orden en que fueron incorporados."""
+
     team = db.query(Team).filter(Team.id == team_id).first()
     if team is None:
         raise TeamNotFoundError("Team not found")
@@ -198,6 +206,35 @@ def update_team_self_assignment_service(db: Session, team_id: UUID, enabled: boo
         raise TeamNotFoundError("Team not found")
 
     team.self_assignment_enabled = enabled
+    try:
+        db.commit()
+        db.refresh(team)
+        return team
+    except Exception:
+        db.rollback()
+        raise
+
+
+def update_team_auto_assignment_service(
+    db: Session,
+    team_id: UUID,
+    enabled: bool,
+    delay_minutes: int,
+    strategy: AssignmentStrategy,
+) -> Team:
+    """Configura si, cuando y con que criterio se autoasigna el team."""
+
+    if delay_minutes < 0:
+        raise InvalidTeamAssignmentSettingsError("Auto-assignment delay cannot be negative")
+
+    team = db.query(Team).filter(Team.id == team_id).first()
+    if team is None:
+        raise TeamNotFoundError("Team not found")
+
+    team.auto_assignment_enabled = enabled
+    team.auto_assignment_delay_minutes = delay_minutes
+    team.assignment_strategy = strategy
+
     try:
         db.commit()
         db.refresh(team)

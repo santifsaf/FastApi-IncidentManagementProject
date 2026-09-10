@@ -1,3 +1,5 @@
+"""Endpoints HTTP para el ciclo de vida y la operación de tickets."""
+
 from typing import Annotated
 from uuid import UUID
 
@@ -110,6 +112,8 @@ def create_ticket(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    """Crea un ticket abierto para el usuario autenticado."""
+
     try:
         return create_ticket_service(db, ticket, current_user)
     except TicketServiceError as exc:
@@ -123,6 +127,8 @@ def get_tickets_created_by_me(
     skip: PaginationSkip = 0,
     limit: PaginationLimit = 20,
 ):
+    """Lista de forma paginada los tickets creados por el usuario actual."""
+
     return get_tickets_created_by_user(db, current_user, skip, limit)
 
 
@@ -133,6 +139,8 @@ def get_tickets_assigned_to_me(
     skip: PaginationSkip = 0,
     limit: PaginationLimit = 20,
 ):
+    """Lista los tickets asignados directamente al usuario operativo actual."""
+
     try:
         return get_tickets_assigned_to_user(db, current_user, skip, limit)
     except TicketServiceError as exc:
@@ -146,6 +154,8 @@ def get_all_tickets(
     skip: PaginationSkip = 0,
     limit: PaginationLimit = 20,
 ):
+    """Lista los tickets visibles según el alcance del agente o administrador."""
+
     try:
         return get_visible_tickets(db, current_user, skip, limit)
     except TicketServiceError as exc:
@@ -158,7 +168,7 @@ def get_ticket_detail_endpoint(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Consulta el detalle sin mezclar permisos ni queries en el router."""
+    """Devuelve el detalle de un ticket si el usuario puede verlo."""
 
     try:
         return get_ticket_detail(db, ticket_id, current_user)
@@ -178,6 +188,8 @@ def archive_ticket_endpoint(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("ADMIN")),
 ):
+    """Archiva administrativamente un ticket cerrado."""
+
     try:
         return archive_ticket(db, ticket_id, current_user, archive_in.reason)
     except TicketServiceError as exc:
@@ -190,6 +202,8 @@ def unarchive_ticket_endpoint(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("ADMIN")),
 ):
+    """Vuelve a mostrar en las operaciones normales un ticket archivado."""
+
     try:
         return unarchive_ticket(db, ticket_id, current_user)
     except TicketServiceError as exc:
@@ -208,10 +222,13 @@ def update_ticket_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("AGENT", "ADMIN")),
 ):
+    """Solicita un cambio de estado y registra su motivo cuando corresponde."""
+
     try:
         return change_ticket_status(db, ticket_id, ticket_update.status, current_user, ticket_update.reason)
     except TicketServiceError as exc:
         raise _ticket_service_error_to_http(exc) from exc
+
 
 @router.patch("/{ticket_id}/assign-team", response_model=TicketRead)
 def ticket_team_assignment(
@@ -220,9 +237,9 @@ def ticket_team_assignment(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("ADMIN", "AGENT")),
 ):
+    """Asigna el ticket a un equipo con alcance para atenderlo."""
+
     try:
-        # ADMIN asigna cualquier team. Un TEAM LEAD solo puede tomar para su
-        # equipo tickets sin team y de categorias asociadas a ese team.
         return assign_ticket_to_team(db, ticket_id, assignment.team_id, current_user)
     except TicketServiceError as exc:
         raise _ticket_service_error_to_http(exc) from exc
@@ -235,9 +252,9 @@ def update_ticket_category(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("ADMIN", "AGENT")),
 ):
+    """Cambia la categoría y exige un motivo de auditoría."""
+
     try:
-        # El service decide si el usuario puede recategorizar y limpia team/agente
-        # cuando la categoria cambia para no dejar asignaciones inconsistentes.
         return change_ticket_category(
             db,
             ticket_id,
@@ -256,9 +273,9 @@ def ticket_assignment(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("ADMIN", "AGENT")),
 ):
+    """Asigna como responsable a un miembro activo del equipo del ticket."""
+
     try:
-        # ADMIN tiene alcance global; TEAM LEAD solo opera dentro de su equipo.
-        # En ambos casos, el service protege la coherencia entre team y responsable.
         return assign_ticket(db, ticket_id, assignment.assigned_to, current_user)
     except TicketServiceError as exc:
         raise _ticket_service_error_to_http(exc) from exc
@@ -268,9 +285,9 @@ def ticket_assignment(
 def claim_unassigned_ticket(
     ticket_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles("AGENT")),
+    current_user: User = Depends(require_roles("AGENT", "ADMIN")),
 ):
-    """Permite que un agente tome un ticket abierto de uno de sus equipos."""
+    """Permite a un miembro operativo reclamar un ticket de su equipo."""
 
     try:
         return claim_ticket(db, ticket_id, current_user)
@@ -290,8 +307,9 @@ def create_ticket_dependency(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("ADMIN", "AGENT")),
 ):
+    """Relaciona el ticket con otro ticket existente que lo bloquea."""
+
     try:
-        # Vincula el ticket actual con otro ticket existente que lo bloquea.
         return add_ticket_dependency(
             db,
             ticket_id,
@@ -309,6 +327,8 @@ def get_ticket_dependencies(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    """Lista las dependencias activas del ticket."""
+
     try:
         return get_ticket_dependencies_service(db, ticket_id, current_user)
     except TicketServiceError as exc:
@@ -321,8 +341,9 @@ def get_blocked_tickets(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    """Lista los tickets que dependen del ticket actual."""
+
     try:
-        # Vista inversa de dependencies: tickets que dependen del ticket actual.
         return get_blocked_tickets_service(db, ticket_id, current_user)
     except TicketServiceError as exc:
         raise _ticket_service_error_to_http(exc) from exc
@@ -336,8 +357,9 @@ def remove_ticket_dependency_endpoint(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("ADMIN", "AGENT")),
 ):
+    """Desactiva una dependencia y conserva sus datos de auditoría."""
+
     try:
-        # Soft delete: deja de bloquear, pero conserva quien la removio y por que.
         return remove_ticket_dependency(db, ticket_id, dependency_id, current_user, dependency_remove.reason)
     except TicketServiceError as exc:
         raise _ticket_service_error_to_http(exc) from exc
@@ -350,8 +372,9 @@ def create_ticket_blocking_ticket(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("ADMIN", "AGENT")),
 ):
+    """Crea el ticket bloqueante y su dependencia en una sola transacción."""
+
     try:
-        # Crea el ticket bloqueante, crea la dependencia y deja el ticket actual en ON_HOLD.
         return create_blocking_ticket(db, ticket_id, blocking_ticket_in, current_user)
     except TicketServiceError as exc:
         raise _ticket_service_error_to_http(exc) from exc
@@ -369,7 +392,7 @@ def create_ticket_comment_endpoint(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Recibe la peticion HTTP; permisos y persistencia viven en el service."""
+    """Publica un comentario con la visibilidad solicitada."""
 
     try:
         return create_ticket_comment(db, ticket_id, comment_in, current_user)
@@ -385,7 +408,7 @@ def get_ticket_comments_endpoint(
     skip: PaginationSkip = 0,
     limit: PaginationLimit = 20,
 ):
-    """Delega al service el acceso y el filtro de comentarios internos."""
+    """Lista comentarios paginados y filtra los internos según el usuario."""
 
     try:
         return get_ticket_comments(db, ticket_id, current_user, skip, limit)
@@ -404,6 +427,8 @@ def get_ticket_status_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    """Devuelve el historial de estados visible para el usuario actual."""
+
     try:
         return get_ticket_status_history_service(db, ticket_id, current_user)
     except TicketServiceError as exc:
@@ -416,8 +441,9 @@ def get_ticket_category_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    """Devuelve el historial operativo de categorías del ticket."""
+
     try:
-        # Misma idea que assignment/team history: es historial operativo interno.
         return get_ticket_category_history_service(db, ticket_id, current_user)
     except TicketServiceError as exc:
         raise _ticket_service_error_to_http(exc) from exc
@@ -429,6 +455,8 @@ def get_ticket_assignment_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    """Devuelve el historial operativo de responsables del ticket."""
+
     try:
         return get_ticket_assignment_history_service(db, ticket_id, current_user)
     except TicketServiceError as exc:
@@ -441,8 +469,9 @@ def get_ticket_team_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    """Devuelve el historial operativo de equipos del ticket."""
+
     try:
-        # El service resuelve existencia, permisos y consulta del historial.
         return get_ticket_team_history_service(db, ticket_id, current_user)
     except TicketServiceError as exc:
         raise _ticket_service_error_to_http(exc) from exc

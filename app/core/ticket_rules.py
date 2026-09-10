@@ -17,10 +17,14 @@ ALLOWED_TRANSITIONS = {
 
 
 def is_valid_status_transition(current_status: TicketStatus, new_status: TicketStatus) -> bool:
+    """Indica si el flujo permite pasar del estado actual al solicitado."""
+
     return new_status in ALLOWED_TRANSITIONS.get(current_status, set())
 
 
 def is_status_change_reason_required(current_status: TicketStatus, new_status: TicketStatus) -> bool:
+    """Indica qué transiciones sensibles necesitan un motivo de auditoría."""
+
     return (
         new_status in {TicketStatus.ON_HOLD, TicketStatus.CLOSED}
         or current_status == TicketStatus.RESOLVED and new_status == TicketStatus.OPEN
@@ -28,6 +32,8 @@ def is_status_change_reason_required(current_status: TicketStatus, new_status: T
 
 
 def can_user_change_status(user, ticket, new_status) -> bool:
+    """Autoriza cambios de estado según rol, asignación y estado solicitado."""
+
     if user.role == UserRole.USER:
         return False
 
@@ -41,6 +47,8 @@ def can_user_change_status(user, ticket, new_status) -> bool:
 
 
 def can_user_view_ticket(user, ticket, is_team_member: bool = False) -> bool:
+    """Autoriza la lectura según creador, responsable o membresía del team."""
+
     if user.role == UserRole.ADMIN:
         return True
 
@@ -61,6 +69,8 @@ def can_user_assign_ticket(
     is_current_user_team_lead: bool = False,
     is_assigned_user_team_member: bool = False,
 ) -> bool:
+    """Autoriza la asignación manual sin romper la pertenencia al team."""
+
     # USER representa al solicitante; solo AGENT y ADMIN pueden resolver tickets.
     if assigned_user is None or assigned_user.role not in ASSIGNABLE_USER_ROLES:
         return False
@@ -96,10 +106,10 @@ def can_user_claim_ticket(
     is_team_member: bool = False,
     self_assignment_enabled: bool = False,
 ) -> bool:
-    """Decide si un agente puede tomar un ticket abierto de su equipo."""
+    """Decide si un miembro operativo puede tomar un ticket abierto de su equipo."""
 
     return (
-        user.role == UserRole.AGENT
+        user.role in ASSIGNABLE_USER_ROLES
         and user.is_active
         and ticket.team_id is not None
         and ticket.assigned_to is None
@@ -111,6 +121,8 @@ def can_user_claim_ticket(
 
 
 def can_user_view_status_history(user, ticket, is_team_member: bool = False) -> bool:
+    """Autoriza la lectura del historial de estados del ticket."""
+
     if user.role == UserRole.ADMIN:
         return True
 
@@ -124,6 +136,8 @@ def can_user_view_status_history(user, ticket, is_team_member: bool = False) -> 
 
 
 def can_user_view_assignment_history(user, ticket, is_team_member: bool = False) -> bool:
+    """Autoriza historiales internos de responsable, team y categoría."""
+
     if user.role == UserRole.ADMIN:
         return True
 

@@ -91,14 +91,15 @@ def assign_ticket(db: Session, ticket_id: UUID, assigned_user_id: UUID, current_
 
 
 def claim_ticket(db: Session, ticket_id: UUID, current_user: User) -> Ticket:
-    """Permite que un agente tome un ticket abierto de su propio equipo.
+    """Permite que un miembro operativo tome un ticket abierto de su equipo.
 
     La fila queda bloqueada hasta finalizar la transaccion. De esta manera, si
-    dos agentes reclaman a la vez, solo el primero puede completar la accion.
+    dos usuarios reclaman a la vez, solo el primero puede completar la accion.
+    Un ADMIN participa por su membresia, no por su alcance global.
     """
 
-    if current_user.role != UserRole.AGENT or not current_user.is_active:
-        raise TicketPermissionError("Only active agents can claim tickets")
+    if current_user.role not in {UserRole.AGENT, UserRole.ADMIN} or not current_user.is_active:
+        raise TicketPermissionError("Only active operational users can claim tickets")
 
     try:
         ticket = (
@@ -125,7 +126,7 @@ def claim_ticket(db: Session, ticket_id: UUID, current_user: User) -> Ticket:
 
         current_user_is_member = is_team_member(db, team.id, current_user.id)
         if not current_user_is_member:
-            raise TicketPermissionError("Agent must belong to the ticket team")
+            raise TicketPermissionError("User must belong to the ticket team")
         if not team.self_assignment_enabled:
             raise TicketClaimNotAllowedError("Self-assignment is disabled for this team")
 
@@ -281,6 +282,8 @@ def _get_history_context(
 def get_ticket_category_history_service(
     db: Session, ticket_id: UUID, current_user: User
 ) -> list[TicketCategoryHistory]:
+    """Devuelve los cambios de categoría visibles para el usuario actual."""
+
     _get_history_context(
         db,
         ticket_id,
@@ -298,6 +301,8 @@ def get_ticket_category_history_service(
 def get_ticket_assignment_history_service(
     db: Session, ticket_id: UUID, current_user: User
 ) -> list[TicketAssignmentHistory]:
+    """Devuelve los cambios de responsable visibles para el usuario actual."""
+
     _get_history_context(
         db,
         ticket_id,
@@ -315,6 +320,8 @@ def get_ticket_assignment_history_service(
 def get_ticket_team_history_service(
     db: Session, ticket_id: UUID, current_user: User
 ) -> list[TicketTeamHistory]:
+    """Devuelve los cambios de equipo visibles para el usuario actual."""
+
     _get_history_context(
         db,
         ticket_id,

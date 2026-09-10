@@ -1,3 +1,5 @@
+"""Endpoint de autenticación y emisión de tokens de acceso."""
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -12,8 +14,12 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/login", response_model=Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    # OAuth2PasswordRequestForm siempre envía "username" y "password".
-    # En este proyecto, "username" representa el email del usuario.
+    """Valida email y contraseña, y emite un bearer token para usuarios activos.
+
+    OAuth2 llama ``username`` al identificador del formulario; en esta API ese
+    valor representa el email normalizado del usuario.
+    """
+
     email = normalize_email(form_data.username)
     user = db.query(User).filter(User.email == email).first()
 

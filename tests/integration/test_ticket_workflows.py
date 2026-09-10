@@ -240,27 +240,31 @@ def test_requester_receives_only_public_comments(integration_db):
     assert len(admin_comments) == 2
 
 
-def test_agent_claims_team_ticket_and_persists_assignment_history(integration_db):
-    """Comprueba el reclamo completo con bloqueo y persistencia reales."""
+@pytest.mark.parametrize("operational_role", [UserRole.AGENT, UserRole.ADMIN])
+def test_operational_member_claims_team_ticket_and_persists_assignment_history(
+    integration_db,
+    operational_role,
+):
+    """Comprueba el reclamo de agentes y admins miembros con persistencia real."""
 
     requester = _create_user(integration_db, UserRole.USER)
-    agent = _create_user(integration_db, UserRole.AGENT)
+    operational_user = _create_user(integration_db, operational_role)
     category = _create_category(integration_db)
     team = Team(name=f"Team {uuid4()}", self_assignment_enabled=True)
     integration_db.add(team)
     integration_db.flush()
-    integration_db.add(TeamMember(team_id=team.id, user_id=agent.id))
+    integration_db.add(TeamMember(team_id=team.id, user_id=operational_user.id))
     integration_db.flush()
     ticket = _create_ticket(integration_db, requester, category, team_id=team.id)
 
-    result = claim_ticket(integration_db, ticket.id, agent)
+    result = claim_ticket(integration_db, ticket.id, operational_user)
 
     history = (
         integration_db.query(TicketAssignmentHistory)
         .filter(TicketAssignmentHistory.ticket_id == ticket.id)
         .one()
     )
-    assert result.assigned_to == agent.id
+    assert result.assigned_to == operational_user.id
     assert history.old_assigned_to is None
-    assert history.new_assigned_to == agent.id
-    assert history.changed_by == agent.id
+    assert history.new_assigned_to == operational_user.id
+    assert history.changed_by == operational_user.id

@@ -31,11 +31,11 @@ from app.services.ticket_exceptions import (
 from tests.ticket_service_fakes import FailingTeamAwareFakeDb, TeamAwareFakeDb
 
 
-def make_claim_context(*, enabled=True, is_member=True, **ticket_overrides):
+def make_claim_context(*, enabled=True, is_member=True, role="AGENT", **ticket_overrides):
     """Construye el escenario base de un ticket reclamable."""
 
     team = SimpleNamespace(id=uuid4(), self_assignment_enabled=enabled)
-    agent = SimpleNamespace(id=uuid4(), role="AGENT", is_active=True)
+    agent = SimpleNamespace(id=uuid4(), role=role, is_active=True)
     ticket_data = {
         "id": uuid4(),
         "team_id": team.id,
@@ -64,6 +64,28 @@ def test_agent_claims_open_ticket_from_own_team():
     assert history.old_assigned_to is None
     assert history.new_assigned_to == agent.id
     assert history.changed_by == agent.id
+
+
+def test_admin_member_claims_open_ticket_from_own_team():
+    db, ticket, _, admin = make_claim_context(role="ADMIN")
+
+    result = claim_ticket(db, ticket.id, admin)
+
+    assert result is ticket
+    assert ticket.assigned_to == admin.id
+    history = db.added[0]
+    assert history.new_assigned_to == admin.id
+    assert history.changed_by == admin.id
+
+
+def test_admin_without_membership_cannot_claim_team_ticket():
+    db, ticket, _, admin = make_claim_context(role="ADMIN", is_member=False)
+
+    with pytest.raises(TicketPermissionError, match="must belong"):
+        claim_ticket(db, ticket.id, admin)
+
+    assert ticket.assigned_to is None
+    assert db.committed is False
 
 
 def test_agent_cannot_claim_when_team_disables_self_assignment():
@@ -108,7 +130,7 @@ def test_inactive_agent_cannot_claim_ticket():
     db, ticket, _, agent = make_claim_context()
     agent.is_active = False
 
-    with pytest.raises(TicketPermissionError, match="active agents"):
+    with pytest.raises(TicketPermissionError, match="active operational users"):
         claim_ticket(db, ticket.id, agent)
 
     assert ticket.assigned_to is None
@@ -123,11 +145,7 @@ def test_assign_ticket_updates_ticket_and_creates_history():
     - Se confirma la transaccion.
     """
 
-    # Simulamos que el ticket ya estaba asignado a otro usuario.
     old_assigned_id = uuid4()
-
-    # SimpleNamespace crea objetos simples con atributos.
-    # Lo usamos para no depender de SQLAlchemy ni de una base real.
     team_id = uuid4()
     ticket = SimpleNamespace(
         id=uuid4(),
@@ -135,13 +153,11 @@ def test_assign_ticket_updates_ticket_and_creates_history():
         team_id=team_id,
     )
 
-    # Usuario que realiza la accion.
     current_user = SimpleNamespace(
         id=uuid4(),
         role="ADMIN",
     )
 
-    # Usuario destino de la asignacion.
     assigned_user = SimpleNamespace(
         id=uuid4(),
         role="AGENT",
@@ -155,38 +171,18 @@ def test_assign_ticket_updates_ticket_and_creates_history():
 
     result = assign_ticket(db, ticket.id, assigned_user.id, current_user)
 
-    # El service devuelve el mismo ticket que recibio, pero actualizado.
     assert result is ticket
-
-    # assigned_to debe pasar a ser el ID del nuevo agente.
     assert ticket.assigned_to == assigned_user.id
-
-    # El service debe confirmar la operacion.
     assert db.committed is True
-
-    # El service debe refrescar el ticket despues del commit.
     assert db.refreshed is ticket
-
     assert db.rolled_back is False
-
-    # El service deberia agregar un solo objeto: el historial.
     assert len(db.added) == 1
 
     history = db.added[0]
-
-    # Confirmamos que lo agregado sea un historial de asignacion.
     assert isinstance(history, TicketAssignmentHistory)
-
-    # El historial debe apuntar al ticket modificado.
     assert history.ticket_id == ticket.id
-
-    # Debe guardar quien tenia el ticket antes.
     assert history.old_assigned_to == old_assigned_id
-
-    # Debe guardar quien quedo asignado ahora.
     assert history.new_assigned_to == assigned_user.id
-
-    # Debe guardar quien hizo el cambio.
     assert history.changed_by == current_user.id
 
 
@@ -240,22 +236,14 @@ def test_assign_ticket_raises_permission_error_when_user_cannot_assign():
     with pytest.raises(TicketPermissionError):
         assign_ticket(db, ticket.id, assigned_user.id, current_user)
 
-    # Como fallo por permisos, el ticket no deberia modificarse.
     assert ticket.assigned_to is None
-
-    # No deberia haberse creado historial.
     assert db.added == []
-
-    # No deberia confirmarse ninguna transaccion.
     assert db.committed is False
-
-    # No deberia refrescarse el ticket.
     assert db.refreshed is None
-
     assert db.rolled_back is False
 
 
-def test_assign_ticket_raises_value_error_when_agent_is_already_assigned():
+def test_assign_ticket_raises_specific_error_when_agent_is_already_assigned():
     """
     Si no cambia el agente asignado, no hay accion real para auditar.
     """

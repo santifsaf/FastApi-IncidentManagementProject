@@ -301,14 +301,30 @@ def test_claim_ticket_endpoint_maps_disabled_team_to_400(
     assert response.json()["detail"] == "Self-assignment is disabled for this team"
 
 
-def test_admin_cannot_use_claim_endpoint(client, override_current_user, override_db):
+def test_admin_can_reach_claim_service_endpoint(
+    client,
+    monkeypatch,
+    override_current_user,
+    override_db,
+):
     admin = SimpleNamespace(id=uuid4(), role=UserRole.ADMIN, is_active=True)
+    ticket = make_ticket(team_id=uuid4(), assigned_to=admin.id)
     override_current_user(admin)
     override_db()
 
-    response = client.patch(f"/tickets/{uuid4()}/claim")
+    from app.api.routes import tickets as tickets_routes
 
-    assert response.status_code == 403
+    def fake_claim_ticket(db, current_ticket_id, current_user):
+        assert current_ticket_id == ticket.id
+        assert current_user is admin
+        return ticket
+
+    monkeypatch.setattr(tickets_routes, "claim_ticket", fake_claim_ticket)
+
+    response = client.patch(f"/tickets/{ticket.id}/claim")
+
+    assert response.status_code == 200
+    assert response.json()["assigned_to"] == str(admin.id)
 
 
 def test_status_history_endpoint_returns_403_for_unauthorized_user(client, override_current_user, override_db):

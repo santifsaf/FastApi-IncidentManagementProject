@@ -173,7 +173,7 @@ def test_cannot_assign_ticket_to_missing_user():
     "role, is_active, team_id, assigned_to, status, archived_at, is_member, enabled, expected",
     [
         ("AGENT", True, "team-id", None, TicketStatus.OPEN, None, True, True, True),
-        ("ADMIN", True, "team-id", None, TicketStatus.OPEN, None, True, True, False),
+        ("ADMIN", True, "team-id", None, TicketStatus.OPEN, None, True, True, True),
         ("AGENT", False, "team-id", None, TicketStatus.OPEN, None, True, True, False),
         ("AGENT", True, None, None, TicketStatus.OPEN, None, True, True, False),
         ("AGENT", True, "team-id", "other-agent", TicketStatus.OPEN, None, True, True, False),

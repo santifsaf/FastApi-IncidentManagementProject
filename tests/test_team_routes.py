@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
+from app.models.team import AssignmentStrategy
 from app.models.user import UserRole
 from app.services.team_service import TeamLeadRemovalError
 
@@ -17,6 +18,9 @@ def make_team(**overrides):
         "id": uuid4(),
         "name": "Soporte",
         "self_assignment_enabled": False,
+        "auto_assignment_enabled": False,
+        "auto_assignment_delay_minutes": 0,
+        "assignment_strategy": AssignmentStrategy.LEAST_ACTIVE,
         "created_at": datetime(2024, 1, 1, tzinfo=timezone.utc),
     }
     data.update(overrides)
@@ -105,6 +109,65 @@ def test_agent_cannot_change_team_self_assignment(client, override_current_user,
     )
 
     assert response.status_code == 403
+
+
+def test_admin_configures_team_auto_assignment(client, monkeypatch, override_current_user, override_db):
+    admin = SimpleNamespace(id=uuid4(), role=UserRole.ADMIN, is_active=True)
+    team_id = uuid4()
+    updated_team = make_team(
+        id=team_id,
+        auto_assignment_enabled=True,
+        auto_assignment_delay_minutes=20,
+        assignment_strategy=AssignmentStrategy.LONGEST_IDLE,
+    )
+    override_current_user(admin)
+    override_db()
+
+    from app.api.routes import teams as teams_routes
+
+    def fake_update_auto_assignment(db, current_team_id, enabled, delay_minutes, strategy):
+        assert current_team_id == team_id
+        assert enabled is True
+        assert delay_minutes == 20
+        assert strategy == AssignmentStrategy.LONGEST_IDLE
+        return updated_team
+
+    monkeypatch.setattr(
+        teams_routes,
+        "update_team_auto_assignment_service",
+        fake_update_auto_assignment,
+    )
+
+    response = client.patch(
+        f"/teams/{team_id}/auto-assignment",
+        json={
+            "auto_assignment_enabled": True,
+            "auto_assignment_delay_minutes": 20,
+            "assignment_strategy": "LONGEST_IDLE",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["auto_assignment_enabled"] is True
+    assert response.json()["auto_assignment_delay_minutes"] == 20
+    assert response.json()["assignment_strategy"] == "LONGEST_IDLE"
+
+
+def test_team_auto_assignment_rejects_negative_delay(client, override_current_user, override_db):
+    admin = SimpleNamespace(id=uuid4(), role=UserRole.ADMIN, is_active=True)
+    override_current_user(admin)
+    override_db()
+
+    response = client.patch(
+        f"/teams/{uuid4()}/auto-assignment",
+        json={
+            "auto_assignment_enabled": True,
+            "auto_assignment_delay_minutes": -1,
+            "assignment_strategy": "LEAST_ACTIVE",
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_user_cannot_create_team(client, override_current_user, override_db):

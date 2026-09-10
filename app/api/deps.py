@@ -19,7 +19,8 @@ def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
 ):
-    #Decodifica el JWT, extrae el user id desde `sub` y devuelve ese usuario.
+    """Obtiene el usuario identificado por el claim ``sub`` del JWT."""
+
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -53,6 +54,8 @@ def get_current_active_user(
 
 
 def require_roles(*roles: str):
+    """Crea una dependencia que exige un usuario activo con uno de los roles indicados."""
+
     def role_checker(
         current_user: User = Depends(get_current_active_user),
     ):

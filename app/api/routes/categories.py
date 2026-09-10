@@ -1,3 +1,5 @@
+"""Endpoints HTTP para categorías y sus equipos habilitados."""
+
 from typing import Annotated
 from uuid import UUID
 
@@ -36,6 +38,8 @@ PaginationLimit = Annotated[int, Query(ge=1, le=100)]
 
 
 def _category_service_error_to_http(exc: CategoryServiceError) -> HTTPException:
+    """Traduce errores de categorías a códigos HTTP estables."""
+
     if isinstance(exc, (CategoryNotFoundError, CategoryTeamNotFoundError)):
         return HTTPException(status_code=404, detail=str(exc))
 
@@ -57,8 +61,9 @@ def create_category(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("ADMIN")),
 ):
+    """Crea una categoría activa; operación reservada a administradores."""
+
     try:
-        # Las categorias las administra ADMIN; el service valida nombre y duplicados.
         return create_category_service(db, category_in)
     except CategoryServiceError as exc:
         raise _category_service_error_to_http(exc) from exc
@@ -72,8 +77,8 @@ def get_categories(
     limit: PaginationLimit = 20,
     include_inactive: bool = False,
 ):
-    # Los usuarios activos necesitan ver categorias para crear tickets.
-    # Solo ADMIN puede pedir tambien categorias inactivas.
+    """Lista categorías activas; un admin puede incluir las inactivas."""
+
     query = db.query(TicketCategory).order_by(TicketCategory.name)
 
     if current_user.role != UserRole.ADMIN or not include_inactive:
@@ -90,9 +95,9 @@ def get_category_ticket_queue(
     skip: PaginationSkip = 0,
     limit: PaginationLimit = 20,
 ):
+    """Lista tickets de la categoría que todavía no tienen equipo."""
+
     try:
-        # Cola manual: tickets de la categoria que todavia no tienen team.
-        # La autoasignacion de team queda para una etapa posterior.
         return get_category_ticket_queue_service(db, category_id, current_user, skip, limit)
     except CategoryServiceError as exc:
         raise _category_service_error_to_http(exc) from exc
@@ -105,9 +110,9 @@ def add_category_team(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("ADMIN")),
 ):
+    """Habilita a un equipo para atender tickets de la categoría."""
+
     try:
-        # Esta asociacion define que un team atiende una categoria,
-        # pero no asigna automaticamente tickets a ese team todavia.
         return add_category_team_service(db, category_id, category_team_in.team_id)
     except CategoryServiceError as exc:
         raise _category_service_error_to_http(exc) from exc

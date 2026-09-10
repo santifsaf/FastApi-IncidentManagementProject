@@ -1,3 +1,5 @@
+"""Endpoints HTTP para equipos, miembros, leads y políticas de asignación."""
+
 from typing import Annotated
 from uuid import UUID
 
@@ -12,6 +14,7 @@ from app.models.ticket import Ticket
 from app.models.user import User, UserRole
 from app.schemas.team import (
     TeamCreate,
+    TeamAutoAssignmentUpdate,
     TeamLeadCreate,
     TeamLeadRead,
     TeamMemberCreate,
@@ -22,6 +25,7 @@ from app.schemas.team import (
 from app.schemas.ticket import TicketRead
 from app.services.team_service import (
     InvalidTeamLeadError,
+    InvalidTeamAssignmentSettingsError,
     InvalidTeamMemberError,
     InvalidTeamNameError,
     TeamServiceError,
@@ -40,6 +44,7 @@ from app.services.team_service import (
     get_team_leads_service,
     remove_team_lead_service,
     remove_team_member_service,
+    update_team_auto_assignment_service,
     update_team_self_assignment_service,
 )
 from app.services.team_queries import is_team_member
@@ -50,13 +55,24 @@ PaginationLimit = Annotated[int, Query(ge=1, le=100)]
 
 
 def _team_service_error_to_http(exc: TeamServiceError) -> HTTPException:
+    """Traduce errores de equipos a códigos HTTP estables."""
+
     if isinstance(exc, (TeamNotFoundError, TeamLeadNotFoundError, UserNotFoundError, TeamMemberNotFoundError)):
         return HTTPException(status_code=404, detail=str(exc))
 
     if isinstance(exc, (TeamAlreadyExistsError, TeamMemberAlreadyExistsError, TeamLeadAlreadyExistsError, TeamDataConflictError)):
         return HTTPException(status_code=409, detail=str(exc))
 
-    if isinstance(exc, (InvalidTeamNameError, InvalidTeamLeadError, InvalidTeamMemberError, TeamLeadRemovalError)):
+    if isinstance(
+        exc,
+        (
+            InvalidTeamNameError,
+            InvalidTeamLeadError,
+            InvalidTeamMemberError,
+            InvalidTeamAssignmentSettingsError,
+            TeamLeadRemovalError,
+        ),
+    ):
         return HTTPException(status_code=400, detail=str(exc))
 
     return HTTPException(status_code=400, detail=str(exc))
@@ -68,8 +84,9 @@ def create_team(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("ADMIN")),
 ):
+    """Crea un equipo con su primer lead y miembro."""
+
     try:
-        # Crear team es un caso de uso de negocio: el service busca y valida al lead.
         return create_team_service(db, team_in)
     except TeamServiceError as exc:
         raise _team_service_error_to_http(exc) from exc
@@ -82,7 +99,8 @@ def get_teams(
     skip: PaginationSkip = 0,
     limit: PaginationLimit = 20,
 ):
-    # ADMIN ve todos los equipos; AGENT solo ve los equipos donde pertenece.
+    """Lista todos los equipos para admins y las membresías propias para agentes."""
+
     query = db.query(Team).order_by(Team.name)
 
     if current_user.role == UserRole.ADMIN:
@@ -101,7 +119,8 @@ def get_team(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    # Este endpoint muestra un equipo solo si el usuario tiene alcance sobre el.
+    """Devuelve un equipo visible para el admin o uno de sus miembros."""
+
     team = db.query(Team).filter(Team.id == team_id).first()
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
@@ -119,13 +138,34 @@ def update_team_self_assignment(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("ADMIN")),
 ):
-    """Permite que ADMIN configure si los agentes pueden tomar tickets del team."""
+    """Configura si los miembros pueden reclamar tickets del equipo."""
 
     try:
         return update_team_self_assignment_service(
             db,
             team_id,
             settings_in.self_assignment_enabled,
+        )
+    except TeamServiceError as exc:
+        raise _team_service_error_to_http(exc) from exc
+
+
+@router.patch("/{team_id}/auto-assignment", response_model=TeamRead)
+def update_team_auto_assignment(
+    team_id: UUID,
+    settings_in: TeamAutoAssignmentUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("ADMIN")),
+):
+    """Guarda la política de autoasignación; todavía no ejecuta el proceso."""
+
+    try:
+        return update_team_auto_assignment_service(
+            db,
+            team_id,
+            settings_in.auto_assignment_enabled,
+            settings_in.auto_assignment_delay_minutes,
+            settings_in.assignment_strategy,
         )
     except TeamServiceError as exc:
         raise _team_service_error_to_http(exc) from exc
@@ -138,9 +178,9 @@ def add_team_member(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("ADMIN")),
 ):
+    """Agrega un agente o administrador activo como miembro del equipo."""
+
     try:
-        # El service valida que el team exista y que el miembro sea AGENT o ADMIN activo.
-        # Agregar una membresia no convierte automaticamente al usuario en TeamLead.
         return add_team_member_service(db, team_id, member_in.user_id)
     except TeamServiceError as exc:
         raise _team_service_error_to_http(exc) from exc
@@ -152,8 +192,9 @@ def get_team_leads(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("ADMIN")),
 ):
+    """Lista los responsables de liderazgo del equipo."""
+
     try:
-        # TeamLead es la fuente de verdad para saber quienes lideran el equipo.
         return get_team_leads_service(db, team_id)
     except TeamServiceError as exc:
         raise _team_service_error_to_http(exc) from exc
@@ -166,8 +207,9 @@ def add_team_lead(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("ADMIN")),
 ):
+    """Agrega un lead y garantiza que también sea miembro del equipo."""
+
     try:
-        # Agregar un lead tambien lo agrega como miembro si todavia no pertenecia al team.
         return add_team_lead_service(db, team_id, lead_in.user_id)
     except TeamServiceError as exc:
         raise _team_service_error_to_http(exc) from exc
@@ -180,8 +222,9 @@ def remove_team_lead(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("ADMIN")),
 ):
+    """Quita un lead sin permitir que el equipo quede sin liderazgo."""
+
     try:
-        # El service impide dejar un equipo sin ningun lead.
         remove_team_lead_service(db, team_id, user_id)
     except TeamServiceError as exc:
         raise _team_service_error_to_http(exc) from exc
@@ -194,8 +237,9 @@ def remove_team_member(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("ADMIN")),
 ):
+    """Quita un miembro que no sea lead del equipo."""
+
     try:
-        # El service protege la invariante: todo lead debe seguir siendo miembro.
         remove_team_member_service(db, team_id, user_id)
     except TeamServiceError as exc:
         raise _team_service_error_to_http(exc) from exc
@@ -209,7 +253,8 @@ def get_team_tickets(
     skip: PaginationSkip = 0,
     limit: PaginationLimit = 20,
 ):
-    # La cola del equipo puede verla ADMIN o cualquier miembro del team.
+    """Lista tickets no archivados del equipo para admins y miembros."""
+
     team = db.query(Team).filter(Team.id == team_id).first()
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")

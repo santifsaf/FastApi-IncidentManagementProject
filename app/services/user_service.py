@@ -1,3 +1,5 @@
+"""Casos de uso relacionados con la creación de usuarios."""
+
 from sqlalchemy.exc import IntegrityError
 
 from app.core.security import hash_password, normalize_email
@@ -13,6 +15,8 @@ class UserServiceError(Exception):
 
 
 def create_user_service(db, user_in: UserCreate) -> User:
+    """Normaliza el email, protege la contraseña y persiste un usuario único."""
+
     email = normalize_email(user_in.email)
     existing_user = db.query(User).filter(User.email == email).first()
     if existing_user:

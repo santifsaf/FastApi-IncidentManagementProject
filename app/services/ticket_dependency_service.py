@@ -23,6 +23,8 @@ from app.services.ticket_service_utils import commit_and_refresh, normalize_opti
 
 
 def _can_user_manage_ticket_dependencies(db: Session, ticket: Ticket, current_user: User) -> bool:
+    """Permite administrar dependencias a admins o leads del equipo actual."""
+
     if current_user.role == UserRole.ADMIN:
         return True
     if current_user.role != UserRole.AGENT or ticket.team_id is None:
