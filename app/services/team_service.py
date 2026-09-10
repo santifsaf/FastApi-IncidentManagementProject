@@ -100,7 +100,10 @@ def create_team_service(db: Session, team_in: TeamCreate) -> Team:
     if not lead_user.is_active:
         raise InvalidTeamLeadError("Inactive users cannot lead a team")
 
-    team = Team(name=normalized_name)
+    team = Team(
+        name=normalized_name,
+        self_assignment_enabled=team_in.self_assignment_enabled,
+    )
 
     try:
         db.add(team)
@@ -185,6 +188,23 @@ def get_team_leads_service(db: Session, team_id: UUID) -> list[TeamLead]:
         .order_by(TeamLead.created_at.asc())
         .all()
     )
+
+
+def update_team_self_assignment_service(db: Session, team_id: UUID, enabled: bool) -> Team:
+    """Activa o desactiva el reclamo voluntario de tickets para un equipo."""
+
+    team = db.query(Team).filter(Team.id == team_id).first()
+    if team is None:
+        raise TeamNotFoundError("Team not found")
+
+    team.self_assignment_enabled = enabled
+    try:
+        db.commit()
+        db.refresh(team)
+        return team
+    except Exception:
+        db.rollback()
+        raise
 
 
 def remove_team_lead_service(db: Session, team_id: UUID, user_id: UUID) -> None:

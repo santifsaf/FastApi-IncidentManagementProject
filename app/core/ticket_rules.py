@@ -89,6 +89,27 @@ def can_user_assign_ticket(
     return False
 
 
+def can_user_claim_ticket(
+    user,
+    ticket,
+    *,
+    is_team_member: bool = False,
+    self_assignment_enabled: bool = False,
+) -> bool:
+    """Decide si un agente puede tomar un ticket abierto de su equipo."""
+
+    return (
+        user.role == UserRole.AGENT
+        and user.is_active
+        and ticket.team_id is not None
+        and ticket.assigned_to is None
+        and ticket.status == TicketStatus.OPEN
+        and ticket.archived_at is None
+        and is_team_member
+        and self_assignment_enabled
+    )
+
+
 def can_user_view_status_history(user, ticket, is_team_member: bool = False) -> bool:
     if user.role == UserRole.ADMIN:
         return True

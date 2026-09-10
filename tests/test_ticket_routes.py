@@ -14,6 +14,7 @@ from app.models.ticket import TicketCommentVisibility, TicketPriority, TicketSta
 from app.models.user import UserRole
 from app.services.ticket_exceptions import (
     TicketArchiveError,
+    TicketClaimNotAllowedError,
     TicketCommentNotAllowedError,
     TicketNotFoundError,
     TicketPermissionError,
@@ -253,6 +254,61 @@ def test_assign_ticket_endpoint_requires_team_before_responsible(
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Ticket must belong to a team before assigning a responsible user"
+
+
+def test_agent_can_claim_ticket_endpoint(client, monkeypatch, override_current_user, override_db):
+    agent = SimpleNamespace(id=uuid4(), role=UserRole.AGENT, is_active=True)
+    ticket = make_ticket(team_id=uuid4(), assigned_to=agent.id)
+    override_current_user(agent)
+    override_db()
+
+    from app.api.routes import tickets as tickets_routes
+
+    def fake_claim_ticket(db, current_ticket_id, current_user):
+        assert current_ticket_id == ticket.id
+        assert current_user is agent
+        return ticket
+
+    monkeypatch.setattr(tickets_routes, "claim_ticket", fake_claim_ticket)
+
+    response = client.patch(f"/tickets/{ticket.id}/claim")
+
+    assert response.status_code == 200
+    assert response.json()["assigned_to"] == str(agent.id)
+
+
+def test_claim_ticket_endpoint_maps_disabled_team_to_400(
+    client,
+    monkeypatch,
+    override_current_user,
+    override_db,
+):
+    agent = SimpleNamespace(id=uuid4(), role=UserRole.AGENT, is_active=True)
+    ticket_id = uuid4()
+    override_current_user(agent)
+    override_db()
+
+    from app.api.routes import tickets as tickets_routes
+
+    def fake_claim_ticket(db, current_ticket_id, current_user):
+        raise TicketClaimNotAllowedError("Self-assignment is disabled for this team")
+
+    monkeypatch.setattr(tickets_routes, "claim_ticket", fake_claim_ticket)
+
+    response = client.patch(f"/tickets/{ticket_id}/claim")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Self-assignment is disabled for this team"
+
+
+def test_admin_cannot_use_claim_endpoint(client, override_current_user, override_db):
+    admin = SimpleNamespace(id=uuid4(), role=UserRole.ADMIN, is_active=True)
+    override_current_user(admin)
+    override_db()
+
+    response = client.patch(f"/tickets/{uuid4()}/claim")
+
+    assert response.status_code == 403
 
 
 def test_status_history_endpoint_returns_403_for_unauthorized_user(client, override_current_user, override_db):

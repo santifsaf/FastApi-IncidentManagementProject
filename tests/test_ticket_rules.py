@@ -8,6 +8,7 @@ import pytest
 
 from app.core.ticket_rules import (
     can_user_assign_ticket,
+    can_user_claim_ticket,
     can_user_change_status,
     can_user_create_comment,
     can_ticket_receive_comments,
@@ -23,17 +24,27 @@ from app.models.ticket import TicketCommentVisibility, TicketStatus
 
 class FakeUser:
 
-    def __init__(self, role, id=None):
+    def __init__(self, role, id=None, is_active=True):
         self.role = role
         self.id = id
+        self.is_active = is_active
 
 
 class FakeTicket:
 
-    def __init__(self, created_by=None, assigned_to=None, team_id=None):
+    def __init__(
+        self,
+        created_by=None,
+        assigned_to=None,
+        team_id=None,
+        status=TicketStatus.OPEN,
+        archived_at=None,
+    ):
         self.created_by = created_by
         self.assigned_to = assigned_to
         self.team_id = team_id
+        self.status = status
+        self.archived_at = archived_at
 
 
 @pytest.mark.parametrize(
@@ -156,6 +167,49 @@ def test_cannot_assign_ticket_to_missing_user():
     result = can_user_assign_ticket(current_user, None, ticket)
 
     assert result is False
+
+
+@pytest.mark.parametrize(
+    "role, is_active, team_id, assigned_to, status, archived_at, is_member, enabled, expected",
+    [
+        ("AGENT", True, "team-id", None, TicketStatus.OPEN, None, True, True, True),
+        ("ADMIN", True, "team-id", None, TicketStatus.OPEN, None, True, True, False),
+        ("AGENT", False, "team-id", None, TicketStatus.OPEN, None, True, True, False),
+        ("AGENT", True, None, None, TicketStatus.OPEN, None, True, True, False),
+        ("AGENT", True, "team-id", "other-agent", TicketStatus.OPEN, None, True, True, False),
+        ("AGENT", True, "team-id", None, TicketStatus.ON_HOLD, None, True, True, False),
+        ("AGENT", True, "team-id", None, TicketStatus.OPEN, object(), True, True, False),
+        ("AGENT", True, "team-id", None, TicketStatus.OPEN, None, False, True, False),
+        ("AGENT", True, "team-id", None, TicketStatus.OPEN, None, True, False, False),
+    ],
+)
+def test_can_user_claim_ticket(
+    role,
+    is_active,
+    team_id,
+    assigned_to,
+    status,
+    archived_at,
+    is_member,
+    enabled,
+    expected,
+):
+    user = FakeUser(role=role, id="agent-id", is_active=is_active)
+    ticket = FakeTicket(
+        team_id=team_id,
+        assigned_to=assigned_to,
+        status=status,
+        archived_at=archived_at,
+    )
+
+    result = can_user_claim_ticket(
+        user,
+        ticket,
+        is_team_member=is_member,
+        self_assignment_enabled=enabled,
+    )
+
+    assert result is expected
 
 
 @pytest.mark.parametrize(

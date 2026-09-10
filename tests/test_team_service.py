@@ -22,6 +22,7 @@ from app.services.team_service import (
     get_team_leads_service,
     remove_team_lead_service,
     remove_team_member_service,
+    update_team_self_assignment_service,
 )
 
 
@@ -98,7 +99,7 @@ class FakeQuery:
 
 
 def test_create_team_service_creates_team_and_adds_lead_as_member():
-    team_in = SimpleNamespace(name="Support", lead_id=uuid4())
+    team_in = SimpleNamespace(name="Support", lead_id=uuid4(), self_assignment_enabled=False)
     lead_user = SimpleNamespace(id=team_in.lead_id, role="AGENT", is_active=True)
     db = FakeDb(lead_user=lead_user)
 
@@ -121,19 +122,32 @@ def test_create_team_service_creates_team_and_adds_lead_as_member():
 
 
 def test_create_team_service_accepts_active_admin_as_initial_lead():
-    team_in = SimpleNamespace(name="Infrastructure", lead_id=uuid4())
+    team_in = SimpleNamespace(name="Infrastructure", lead_id=uuid4(), self_assignment_enabled=True)
     lead_user = SimpleNamespace(id=team_in.lead_id, role="ADMIN", is_active=True)
     db = FakeDb(lead_user=lead_user)
 
     result = create_team_service(db, team_in)
 
     assert isinstance(result, Team)
+    assert result.self_assignment_enabled is True
     assert isinstance(db.added[1], TeamLead)
     assert db.added[1].user_id == lead_user.id
     # Todo lead tambien queda registrado como miembro del equipo.
     assert isinstance(db.added[2], TeamMember)
     assert db.added[2].user_id == lead_user.id
     assert db.committed is True
+
+
+def test_admin_configuration_enables_team_self_assignment():
+    team = SimpleNamespace(id=uuid4(), self_assignment_enabled=False)
+    db = FakeDb(existing_team=team)
+
+    result = update_team_self_assignment_service(db, team.id, True)
+
+    assert result is team
+    assert team.self_assignment_enabled is True
+    assert db.committed is True
+    assert db.refreshed is team
 
 
 def test_add_team_lead_service_creates_lead_and_member_if_needed():
@@ -272,7 +286,7 @@ def test_remove_team_member_service_rejects_additional_lead():
 
 
 def test_create_team_service_rejects_user_as_lead():
-    team_in = SimpleNamespace(name="Support", lead_id=uuid4())
+    team_in = SimpleNamespace(name="Support", lead_id=uuid4(), self_assignment_enabled=False)
     lead_user = SimpleNamespace(id=team_in.lead_id, role="USER", is_active=True)
     db = FakeDb(lead_user=lead_user)
 
@@ -283,7 +297,7 @@ def test_create_team_service_rejects_user_as_lead():
 
 
 def test_create_team_service_rejects_inactive_admin_lead():
-    team_in = SimpleNamespace(name="Support", lead_id=uuid4())
+    team_in = SimpleNamespace(name="Support", lead_id=uuid4(), self_assignment_enabled=False)
     lead_user = SimpleNamespace(id=team_in.lead_id, role="ADMIN", is_active=False)
     db = FakeDb(lead_user=lead_user)
 
@@ -295,7 +309,7 @@ def test_create_team_service_rejects_inactive_admin_lead():
 
 def test_create_team_service_rejects_empty_name():
     db = FakeDb()
-    team_in = SimpleNamespace(name="   ", lead_id=uuid4())
+    team_in = SimpleNamespace(name="   ", lead_id=uuid4(), self_assignment_enabled=False)
 
     with pytest.raises(InvalidTeamNameError, match="Team name cannot be empty"):
         create_team_service(db, team_in)

@@ -15,6 +15,7 @@ from app.services.ticket_assignment_service import (
     assign_ticket,
     assign_ticket_to_team,
     change_ticket_category,
+    claim_ticket,
 )
 from app.services.ticket_exceptions import (
     InvalidAssignedUserError,
@@ -22,11 +23,95 @@ from app.services.ticket_exceptions import (
     InvalidTicketCategoryError,
     MissingCategoryChangeReasonError,
     TicketAlreadyAssignedError,
+    TicketClaimNotAllowedError,
     TicketPermissionError,
     TicketTeamAssignmentError,
     TicketTeamPermissionError,
 )
 from tests.ticket_service_fakes import FailingTeamAwareFakeDb, TeamAwareFakeDb
+
+
+def make_claim_context(*, enabled=True, is_member=True, **ticket_overrides):
+    """Construye el escenario base de un ticket reclamable."""
+
+    team = SimpleNamespace(id=uuid4(), self_assignment_enabled=enabled)
+    agent = SimpleNamespace(id=uuid4(), role="AGENT", is_active=True)
+    ticket_data = {
+        "id": uuid4(),
+        "team_id": team.id,
+        "assigned_to": None,
+        "status": TicketStatus.OPEN,
+        "archived_at": None,
+    }
+    ticket_data.update(ticket_overrides)
+    ticket = SimpleNamespace(**ticket_data)
+    membership = SimpleNamespace(team_id=team.id, user_id=agent.id) if is_member else None
+    db = TeamAwareFakeDb(ticket=ticket, team=team, member=membership)
+    return db, ticket, team, agent
+
+
+def test_agent_claims_open_ticket_from_own_team():
+    db, ticket, _, agent = make_claim_context()
+
+    result = claim_ticket(db, ticket.id, agent)
+
+    assert result is ticket
+    assert ticket.assigned_to == agent.id
+    assert db.committed is True
+    assert len(db.added) == 1
+    history = db.added[0]
+    assert isinstance(history, TicketAssignmentHistory)
+    assert history.old_assigned_to is None
+    assert history.new_assigned_to == agent.id
+    assert history.changed_by == agent.id
+
+
+def test_agent_cannot_claim_when_team_disables_self_assignment():
+    db, ticket, _, agent = make_claim_context(enabled=False)
+
+    with pytest.raises(TicketClaimNotAllowedError, match="disabled"):
+        claim_ticket(db, ticket.id, agent)
+
+    assert ticket.assigned_to is None
+    assert db.committed is False
+
+
+def test_agent_cannot_claim_ticket_from_another_team():
+    db, ticket, _, agent = make_claim_context(is_member=False)
+
+    with pytest.raises(TicketPermissionError, match="must belong"):
+        claim_ticket(db, ticket.id, agent)
+
+    assert ticket.assigned_to is None
+    assert db.committed is False
+
+
+@pytest.mark.parametrize(
+    "ticket_overrides, error, message",
+    [
+        ({"assigned_to": uuid4()}, TicketAlreadyAssignedError, "already has"),
+        ({"status": TicketStatus.ON_HOLD}, TicketClaimNotAllowedError, "Only open"),
+        ({"archived_at": object()}, TicketClaimNotAllowedError, "Archived"),
+        ({"team_id": None}, TicketClaimNotAllowedError, "must belong to a team"),
+    ],
+)
+def test_agent_cannot_claim_ticket_in_invalid_operational_state(ticket_overrides, error, message):
+    db, ticket, _, agent = make_claim_context(**ticket_overrides)
+
+    with pytest.raises(error, match=message):
+        claim_ticket(db, ticket.id, agent)
+
+    assert db.committed is False
+
+
+def test_inactive_agent_cannot_claim_ticket():
+    db, ticket, _, agent = make_claim_context()
+    agent.is_active = False
+
+    with pytest.raises(TicketPermissionError, match="active agents"):
+        claim_ticket(db, ticket.id, agent)
+
+    assert ticket.assigned_to is None
 
 
 def test_assign_ticket_updates_ticket_and_creates_history():

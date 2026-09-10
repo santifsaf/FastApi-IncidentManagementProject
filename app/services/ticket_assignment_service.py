@@ -4,7 +4,11 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.core.ticket_rules import can_user_assign_ticket, can_user_view_assignment_history
+from app.core.ticket_rules import (
+    can_user_assign_ticket,
+    can_user_claim_ticket,
+    can_user_view_assignment_history,
+)
 from app.models.category import TicketCategory
 from app.models.team import Team
 from app.models.ticket import (
@@ -25,6 +29,7 @@ from app.services.ticket_exceptions import (
     MissingCategoryChangeReasonError,
     TicketAlreadyAssignedError,
     TicketCategoryNotFoundError,
+    TicketClaimNotAllowedError,
     TicketNotFoundError,
     TicketPermissionError,
     TicketTeamAssignmentError,
@@ -83,6 +88,60 @@ def assign_ticket(db: Session, ticket_id: UUID, assigned_user_id: UUID, current_
         raise TicketPermissionError("Not enough permissions or invalid assignment")
 
     return _assign_ticket_to_user(db, ticket, assigned_user.id, current_user.id)
+
+
+def claim_ticket(db: Session, ticket_id: UUID, current_user: User) -> Ticket:
+    """Permite que un agente tome un ticket abierto de su propio equipo.
+
+    La fila queda bloqueada hasta finalizar la transaccion. De esta manera, si
+    dos agentes reclaman a la vez, solo el primero puede completar la accion.
+    """
+
+    if current_user.role != UserRole.AGENT or not current_user.is_active:
+        raise TicketPermissionError("Only active agents can claim tickets")
+
+    try:
+        ticket = (
+            db.query(Ticket)
+            .filter(Ticket.id == ticket_id)
+            .with_for_update()
+            .first()
+        )
+        if ticket is None:
+            raise TicketNotFoundError("Ticket not found")
+
+        if ticket.team_id is None:
+            raise TicketClaimNotAllowedError("Ticket must belong to a team before it can be claimed")
+        if ticket.assigned_to is not None:
+            raise TicketAlreadyAssignedError("Ticket already has an assigned user")
+        if ticket.status != TicketStatus.OPEN:
+            raise TicketClaimNotAllowedError("Only open tickets can be claimed")
+        if ticket.archived_at is not None:
+            raise TicketClaimNotAllowedError("Archived tickets cannot be claimed")
+
+        team = db.query(Team).filter(Team.id == ticket.team_id).first()
+        if team is None:
+            raise TicketTeamNotFoundError("Team not found")
+
+        current_user_is_member = is_team_member(db, team.id, current_user.id)
+        if not current_user_is_member:
+            raise TicketPermissionError("Agent must belong to the ticket team")
+        if not team.self_assignment_enabled:
+            raise TicketClaimNotAllowedError("Self-assignment is disabled for this team")
+
+        if not can_user_claim_ticket(
+            current_user,
+            ticket,
+            is_team_member=current_user_is_member,
+            self_assignment_enabled=team.self_assignment_enabled,
+        ):
+            raise TicketClaimNotAllowedError("Ticket cannot be claimed")
+
+        return _assign_ticket_to_user(db, ticket, current_user.id, current_user.id)
+    except Exception:
+        # Tambien libera el FOR UPDATE cuando una validacion rechaza el reclamo.
+        db.rollback()
+        raise
 
 
 def assign_ticket_to_team(db: Session, ticket_id: UUID, team_id: UUID, current_user: User) -> Ticket:

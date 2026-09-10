@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, DateTime, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, UniqueConstraint, false, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -15,6 +15,8 @@ class Team(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String, nullable=False, index=True)
+    # Cada equipo decide si sus agentes pueden tomar tickets de su propia cola.
+    self_assignment_enabled = Column(Boolean, nullable=False, default=False, server_default=false())
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     members = relationship(

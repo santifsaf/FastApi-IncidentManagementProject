@@ -31,6 +31,7 @@ from app.services.ticket_assignment_service import (
     assign_ticket,
     assign_ticket_to_team,
     change_ticket_category,
+    claim_ticket,
     get_ticket_assignment_history_service,
     get_ticket_category_history_service,
     get_ticket_team_history_service,
@@ -211,7 +212,6 @@ def update_ticket_status(
         return change_ticket_status(db, ticket_id, ticket_update.status, current_user, ticket_update.reason)
     except TicketServiceError as exc:
         raise _ticket_service_error_to_http(exc) from exc
-    
 
 @router.patch("/{ticket_id}/assign-team", response_model=TicketRead)
 def ticket_team_assignment(
@@ -260,6 +260,20 @@ def ticket_assignment(
         # ADMIN tiene alcance global; TEAM LEAD solo opera dentro de su equipo.
         # En ambos casos, el service protege la coherencia entre team y responsable.
         return assign_ticket(db, ticket_id, assignment.assigned_to, current_user)
+    except TicketServiceError as exc:
+        raise _ticket_service_error_to_http(exc) from exc
+
+
+@router.patch("/{ticket_id}/claim", response_model=TicketRead)
+def claim_unassigned_ticket(
+    ticket_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("AGENT")),
+):
+    """Permite que un agente tome un ticket abierto de uno de sus equipos."""
+
+    try:
+        return claim_ticket(db, ticket_id, current_user)
     except TicketServiceError as exc:
         raise _ticket_service_error_to_http(exc) from exc
 

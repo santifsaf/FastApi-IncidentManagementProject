@@ -29,6 +29,10 @@ class TicketAlreadyAssignedError(TicketServiceError):
     pass
 
 
+class TicketClaimNotAllowedError(TicketServiceError):
+    pass
+
+
 class MissingStatusChangeReasonError(TicketServiceError):
     pass
 

@@ -8,6 +8,7 @@ from app.models.category import TicketCategory
 from app.models.team import Team, TeamMember
 from app.models.ticket import (
     Ticket,
+    TicketAssignmentHistory,
     TicketCommentVisibility,
     TicketDependency,
     TicketStatus,
@@ -16,6 +17,7 @@ from app.models.ticket import (
 from app.models.user import User, UserRole
 from app.schemas.ticket import TicketCommentCreate, TicketCreate
 from app.services.ticket_comment_service import create_ticket_comment, get_ticket_comments
+from app.services.ticket_assignment_service import claim_ticket
 from app.services.ticket_dependency_service import add_ticket_dependency
 from app.services.ticket_exceptions import (
     TicketBlockedByOpenDependenciesError,
@@ -236,3 +238,29 @@ def test_requester_receives_only_public_comments(integration_db):
 
     assert [comment.id for comment in requester_comments] == [public_comment.id]
     assert len(admin_comments) == 2
+
+
+def test_agent_claims_team_ticket_and_persists_assignment_history(integration_db):
+    """Comprueba el reclamo completo con bloqueo y persistencia reales."""
+
+    requester = _create_user(integration_db, UserRole.USER)
+    agent = _create_user(integration_db, UserRole.AGENT)
+    category = _create_category(integration_db)
+    team = Team(name=f"Team {uuid4()}", self_assignment_enabled=True)
+    integration_db.add(team)
+    integration_db.flush()
+    integration_db.add(TeamMember(team_id=team.id, user_id=agent.id))
+    integration_db.flush()
+    ticket = _create_ticket(integration_db, requester, category, team_id=team.id)
+
+    result = claim_ticket(integration_db, ticket.id, agent)
+
+    history = (
+        integration_db.query(TicketAssignmentHistory)
+        .filter(TicketAssignmentHistory.ticket_id == ticket.id)
+        .one()
+    )
+    assert result.assigned_to == agent.id
+    assert history.old_assigned_to is None
+    assert history.new_assigned_to == agent.id
+    assert history.changed_by == agent.id

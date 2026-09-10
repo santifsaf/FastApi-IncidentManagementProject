@@ -16,6 +16,7 @@ def make_team(**overrides):
     data = {
         "id": uuid4(),
         "name": "Soporte",
+        "self_assignment_enabled": False,
         "created_at": datetime(2024, 1, 1, tzinfo=timezone.utc),
     }
     data.update(overrides)
@@ -61,6 +62,49 @@ def test_admin_can_create_team(client, monkeypatch, override_current_user, overr
     assert response.status_code == 201
     assert response.json()["name"] == "Soporte Nivel 1"
     assert "lead_id" not in response.json()
+
+
+def test_admin_can_enable_team_self_assignment(client, monkeypatch, override_current_user, override_db):
+    admin = SimpleNamespace(id=uuid4(), role=UserRole.ADMIN, is_active=True)
+    team_id = uuid4()
+    updated_team = make_team(id=team_id, self_assignment_enabled=True)
+
+    override_current_user(admin)
+    override_db()
+
+    from app.api.routes import teams as teams_routes
+
+    def fake_update_team_self_assignment(db, current_team_id, enabled):
+        assert current_team_id == team_id
+        assert enabled is True
+        return updated_team
+
+    monkeypatch.setattr(
+        teams_routes,
+        "update_team_self_assignment_service",
+        fake_update_team_self_assignment,
+    )
+
+    response = client.patch(
+        f"/teams/{team_id}/self-assignment",
+        json={"self_assignment_enabled": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["self_assignment_enabled"] is True
+
+
+def test_agent_cannot_change_team_self_assignment(client, override_current_user, override_db):
+    agent = SimpleNamespace(id=uuid4(), role=UserRole.AGENT, is_active=True)
+    override_current_user(agent)
+    override_db()
+
+    response = client.patch(
+        f"/teams/{uuid4()}/self-assignment",
+        json={"self_assignment_enabled": True},
+    )
+
+    assert response.status_code == 403
 
 
 def test_user_cannot_create_team(client, override_current_user, override_db):

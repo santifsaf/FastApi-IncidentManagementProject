@@ -74,6 +74,11 @@ class FakeQuery:
     def join(self, *args, **kwargs):
         return self
 
+    def with_for_update(self, *args, **kwargs):
+        """Imita SELECT FOR UPDATE; el bloqueo real se prueba con PostgreSQL."""
+
+        return self
+
     def order_by(self, *args, **kwargs):
         return self
 
@@ -165,4 +170,3 @@ class TeamAwareFakeDb(FakeDb):
 class FailingTeamAwareFakeDb(TeamAwareFakeDb):
     def commit(self):
         raise RuntimeError("Commit failed")
-

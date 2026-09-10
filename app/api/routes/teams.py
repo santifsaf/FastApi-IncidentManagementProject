@@ -10,7 +10,15 @@ from app.db.session import get_db
 from app.models.team import Team, TeamMember
 from app.models.ticket import Ticket
 from app.models.user import User, UserRole
-from app.schemas.team import TeamCreate, TeamLeadCreate, TeamLeadRead, TeamMemberCreate, TeamMemberRead, TeamRead
+from app.schemas.team import (
+    TeamCreate,
+    TeamLeadCreate,
+    TeamLeadRead,
+    TeamMemberCreate,
+    TeamMemberRead,
+    TeamRead,
+    TeamSelfAssignmentUpdate,
+)
 from app.schemas.ticket import TicketRead
 from app.services.team_service import (
     InvalidTeamLeadError,
@@ -32,6 +40,7 @@ from app.services.team_service import (
     get_team_leads_service,
     remove_team_lead_service,
     remove_team_member_service,
+    update_team_self_assignment_service,
 )
 from app.services.team_queries import is_team_member
 
@@ -101,6 +110,25 @@ def get_team(
         raise HTTPException(status_code=403, detail="Not enough permissions")
 
     return team
+
+
+@router.patch("/{team_id}/self-assignment", response_model=TeamRead)
+def update_team_self_assignment(
+    team_id: UUID,
+    settings_in: TeamSelfAssignmentUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("ADMIN")),
+):
+    """Permite que ADMIN configure si los agentes pueden tomar tickets del team."""
+
+    try:
+        return update_team_self_assignment_service(
+            db,
+            team_id,
+            settings_in.self_assignment_enabled,
+        )
+    except TeamServiceError as exc:
+        raise _team_service_error_to_http(exc) from exc
 
 
 @router.post("/{team_id}/members", response_model=TeamMemberRead, status_code=201)

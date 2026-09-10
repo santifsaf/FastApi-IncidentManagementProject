@@ -7,6 +7,11 @@ from pydantic import BaseModel, ConfigDict
 class TeamCreate(BaseModel):
     name: str
     lead_id: UUID
+    self_assignment_enabled: bool = False
+
+
+class TeamSelfAssignmentUpdate(BaseModel):
+    self_assignment_enabled: bool
 
 
 class TeamRead(BaseModel):
@@ -14,6 +19,7 @@ class TeamRead(BaseModel):
 
     id: UUID
     name: str
+    self_assignment_enabled: bool
     created_at: datetime
 
 
