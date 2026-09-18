@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 
 from app.models.ticket import Ticket, TicketPriority, TicketStatus
+from app.models.category import TeamAssignmentStrategy
 from app.models.user import UserRole
 from app.services.ticket_exceptions import (
     InvalidTicketCategoryError,
@@ -19,7 +20,13 @@ from tests.ticket_service_fakes import FailingTeamAwareFakeDb, TeamAwareFakeDb
 
 
 def test_create_ticket_service_creates_ticket():
-    category = SimpleNamespace(id=uuid4(), is_active=True)
+    category = SimpleNamespace(
+        id=uuid4(),
+        is_active=True,
+        auto_team_assignment_enabled=False,
+        team_assignment_delay_minutes=0,
+        team_assignment_strategy=TeamAssignmentStrategy.LEAST_LOAD_PER_MEMBER,
+    )
     db = TeamAwareFakeDb(category=category)
     ticket_in = SimpleNamespace(
         title="Error login",
@@ -45,7 +52,13 @@ def test_create_ticket_service_creates_ticket():
 
 
 def test_create_ticket_service_rolls_back_when_commit_fails():
-    category = SimpleNamespace(id=uuid4(), is_active=True)
+    category = SimpleNamespace(
+        id=uuid4(),
+        is_active=True,
+        auto_team_assignment_enabled=False,
+        team_assignment_delay_minutes=0,
+        team_assignment_strategy=TeamAssignmentStrategy.LEAST_LOAD_PER_MEMBER,
+    )
     db = FailingTeamAwareFakeDb(category=category)
     ticket_in = SimpleNamespace(
         title="Error login",

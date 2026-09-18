@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
-from app.models.ticket import TicketCommentVisibility, TicketPriority, TicketStatus
+from app.models.ticket import AssignmentSource, TicketCommentVisibility, TicketPriority, TicketStatus
 from app.models.user import UserRole
 from app.services.ticket_exceptions import (
     TicketArchiveError,
@@ -348,6 +348,7 @@ def test_assignment_history_endpoint_returns_200_for_assigned_agent(client, over
         old_assigned_to=None,
         new_assigned_to=user.id,
         changed_by=user.id,
+        source=AssignmentSource.MANUAL,
         changed_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
     )
 
@@ -372,6 +373,7 @@ def test_team_history_endpoint_returns_service_result(
         old_team_id=None,
         new_team_id=uuid4(),
         changed_by=user.id,
+        source=AssignmentSource.MANUAL,
         changed_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
     )
 

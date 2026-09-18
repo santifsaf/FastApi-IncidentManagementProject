@@ -11,6 +11,7 @@ from app.db.session import get_db
 from app.models.category import TicketCategory
 from app.models.user import User, UserRole
 from app.schemas.category import (
+    CategoryTeamAssignmentUpdate,
     CategoryTeamCreate,
     CategoryTeamRead,
     TicketCategoryCreate,
@@ -27,9 +28,11 @@ from app.services.category_service import (
     CategoryTeamAlreadyExistsError,
     CategoryTeamNotFoundError,
     InvalidCategoryNameError,
+    InvalidCategoryAssignmentSettingsError,
     add_category_team_service,
     create_category_service,
     get_category_ticket_queue_service,
+    update_category_team_assignment_service,
 )
 
 router = APIRouter(prefix="/ticket-categories", tags=["ticket-categories"])
@@ -49,7 +52,7 @@ def _category_service_error_to_http(exc: CategoryServiceError) -> HTTPException:
     if isinstance(exc, (CategoryAlreadyExistsError, CategoryTeamAlreadyExistsError, CategoryDataConflictError)):
         return HTTPException(status_code=409, detail=str(exc))
 
-    if isinstance(exc, (InvalidCategoryNameError, CategoryInactiveError)):
+    if isinstance(exc, (InvalidCategoryNameError, CategoryInactiveError, InvalidCategoryAssignmentSettingsError)):
         return HTTPException(status_code=400, detail=str(exc))
 
     return HTTPException(status_code=400, detail=str(exc))
@@ -99,6 +102,27 @@ def get_category_ticket_queue(
 
     try:
         return get_category_ticket_queue_service(db, category_id, current_user, skip, limit)
+    except CategoryServiceError as exc:
+        raise _category_service_error_to_http(exc) from exc
+
+
+@router.patch("/{category_id}/team-assignment", response_model=TicketCategoryRead)
+def update_category_team_assignment(
+    category_id: UUID,
+    settings_in: CategoryTeamAssignmentUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("ADMIN")),
+):
+    """Configura el delay y la estrategia de routing automático de la categoría."""
+
+    try:
+        return update_category_team_assignment_service(
+            db,
+            category_id,
+            settings_in.auto_team_assignment_enabled,
+            settings_in.team_assignment_delay_minutes,
+            settings_in.team_assignment_strategy,
+        )
     except CategoryServiceError as exc:
         raise _category_service_error_to_http(exc) from exc
 

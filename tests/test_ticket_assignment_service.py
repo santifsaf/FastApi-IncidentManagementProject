@@ -5,7 +5,10 @@ from uuid import uuid4
 
 import pytest
 
+from app.models.category import TeamAssignmentStrategy
+from app.models.team import AssignmentStrategy
 from app.models.ticket import (
+    AssignmentSource,
     TicketAssignmentHistory,
     TicketCategoryHistory,
     TicketStatus,
@@ -57,6 +60,7 @@ def test_agent_claims_open_ticket_from_own_team():
 
     assert result is ticket
     assert ticket.assigned_to == agent.id
+    assert agent.last_assigned_at is not None
     assert db.committed is True
     assert len(db.added) == 1
     history = db.added[0]
@@ -64,6 +68,7 @@ def test_agent_claims_open_ticket_from_own_team():
     assert history.old_assigned_to is None
     assert history.new_assigned_to == agent.id
     assert history.changed_by == agent.id
+    assert history.source == AssignmentSource.CLAIM
 
 
 def test_admin_member_claims_open_ticket_from_own_team():
@@ -73,6 +78,7 @@ def test_admin_member_claims_open_ticket_from_own_team():
 
     assert result is ticket
     assert ticket.assigned_to == admin.id
+    assert admin.last_assigned_at is not None
     history = db.added[0]
     assert history.new_assigned_to == admin.id
     assert history.changed_by == admin.id
@@ -173,6 +179,7 @@ def test_assign_ticket_updates_ticket_and_creates_history():
 
     assert result is ticket
     assert ticket.assigned_to == assigned_user.id
+    assert assigned_user.last_assigned_at is not None
     assert db.committed is True
     assert db.refreshed is ticket
     assert db.rolled_back is False
@@ -184,6 +191,7 @@ def test_assign_ticket_updates_ticket_and_creates_history():
     assert history.old_assigned_to == old_assigned_id
     assert history.new_assigned_to == assigned_user.id
     assert history.changed_by == current_user.id
+    assert history.source == AssignmentSource.MANUAL
 
 
 def test_cannot_assign_teamless_ticket_to_active_admin():
@@ -438,7 +446,12 @@ def test_admin_cannot_assign_ticket_to_agent_outside_team():
 
 
 def test_assign_ticket_to_team_updates_ticket_team():
-    team = SimpleNamespace(id=uuid4())
+    team = SimpleNamespace(
+        id=uuid4(),
+        auto_assignment_enabled=False,
+        auto_assignment_delay_minutes=0,
+        assignment_strategy=AssignmentStrategy.LEAST_ACTIVE,
+    )
     ticket = SimpleNamespace(id=uuid4(), assigned_to=None, team_id=None)
     db = TeamAwareFakeDb(ticket=ticket, team=team)
     current_user = SimpleNamespace(id=uuid4(), role="ADMIN")
@@ -452,6 +465,7 @@ def test_assign_ticket_to_team_updates_ticket_team():
     assert db.added[0].old_team_id is None
     assert db.added[0].new_team_id == team.id
     assert db.added[0].changed_by == current_user.id
+    assert db.added[0].source == AssignmentSource.MANUAL
 
 
 def test_assign_ticket_to_same_team_raises_error():
@@ -482,7 +496,12 @@ def test_team_lead_assigns_unassigned_ticket_to_own_team_when_category_matches()
     team_id = uuid4()
     category_id = uuid4()
     lead_id = uuid4()
-    team = SimpleNamespace(id=team_id)
+    team = SimpleNamespace(
+        id=team_id,
+        auto_assignment_enabled=False,
+        auto_assignment_delay_minutes=0,
+        assignment_strategy=AssignmentStrategy.LEAST_ACTIVE,
+    )
     ticket = SimpleNamespace(id=uuid4(), assigned_to=None, team_id=None, category_id=category_id)
     category_team = SimpleNamespace(id=uuid4(), category_id=category_id, team_id=team_id)
     current_user = SimpleNamespace(id=lead_id, role="AGENT")
@@ -516,7 +535,13 @@ def test_team_lead_cannot_assign_ticket_if_category_is_not_associated():
 
 def test_admin_changes_ticket_category_and_clears_team_and_assignee():
     old_category_id = uuid4()
-    new_category = SimpleNamespace(id=uuid4(), is_active=True)
+    new_category = SimpleNamespace(
+        id=uuid4(),
+        is_active=True,
+        auto_team_assignment_enabled=False,
+        team_assignment_delay_minutes=0,
+        team_assignment_strategy=TeamAssignmentStrategy.LEAST_LOAD_PER_MEMBER,
+    )
     old_team_id = uuid4()
     old_assigned_to = uuid4()
     ticket = SimpleNamespace(
@@ -548,11 +573,13 @@ def test_admin_changes_ticket_category_and_clears_team_and_assignee():
     assert isinstance(team_history, TicketTeamHistory)
     assert team_history.old_team_id == old_team_id
     assert team_history.new_team_id is None
+    assert team_history.source == AssignmentSource.MANUAL
 
     assignment_history = db.added[2]
     assert isinstance(assignment_history, TicketAssignmentHistory)
     assert assignment_history.old_assigned_to == old_assigned_to
     assert assignment_history.new_assigned_to is None
+    assert assignment_history.source == AssignmentSource.MANUAL
 
 
 def test_change_ticket_category_requires_reason():
@@ -617,7 +644,13 @@ def test_change_ticket_category_rejects_same_category():
 def test_team_lead_changes_category_for_ticket_in_own_team():
     team_id = uuid4()
     lead_id = uuid4()
-    new_category = SimpleNamespace(id=uuid4(), is_active=True)
+    new_category = SimpleNamespace(
+        id=uuid4(),
+        is_active=True,
+        auto_team_assignment_enabled=False,
+        team_assignment_delay_minutes=0,
+        team_assignment_strategy=TeamAssignmentStrategy.LEAST_LOAD_PER_MEMBER,
+    )
     ticket = SimpleNamespace(
         id=uuid4(),
         status=TicketStatus.ON_HOLD,

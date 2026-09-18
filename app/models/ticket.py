@@ -7,6 +7,8 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from app.db.base import Base
+from app.models.category import TeamAssignmentStrategy
+from app.models.team import AssignmentStrategy
 
 
 class TicketStatus(str, Enum):
@@ -28,6 +30,14 @@ class TicketCommentVisibility(str, Enum):
     REQUESTER_VISIBLE = "REQUESTER_VISIBLE"
     # Equivale a una nota interna de Jira: queda dentro del equipo operativo.
     INTERNAL = "INTERNAL"
+
+
+class AssignmentSource(str, Enum):
+    """Origen humano o automático de un cambio de asignación."""
+
+    MANUAL = "MANUAL"
+    CLAIM = "CLAIM"
+    AUTOMATIC = "AUTOMATIC"
 
 
 class Ticket(Base):
@@ -52,6 +62,17 @@ class Ticket(Base):
     team_id = Column(UUID(as_uuid=True), ForeignKey("teams.id"), nullable=True)
     category_id = Column(UUID(as_uuid=True), ForeignKey("ticket_categories.id"), nullable=False)
     closed_at = Column(DateTime(timezone=True), nullable=True)
+    team_queue_entered_at = Column(DateTime(timezone=True), nullable=True)
+    team_assignment_due_at = Column(DateTime(timezone=True), nullable=True)
+    team_assignment_strategy = Column(
+        SqlEnum(TeamAssignmentStrategy, name="teamassignmentstrategy"),
+        nullable=True,
+    )
+    auto_assignment_due_at = Column(DateTime(timezone=True), nullable=True)
+    auto_assignment_strategy = Column(
+        SqlEnum(AssignmentStrategy, name="assignmentstrategy"),
+        nullable=True,
+    )
 
     # Archivado administrativo: no cambia el status, solo oculta el ticket de
     # listados operativos normales sin perderlo de la base.
@@ -132,7 +153,12 @@ class TicketAssignmentHistory(Base):
     new_assigned_to = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
 
     # Usuario que realizó la acción de asignar o reasignar.
-    changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    source = Column(
+        SqlEnum(AssignmentSource, name="assignmentsource"),
+        default=AssignmentSource.MANUAL,
+        nullable=False,
+    )
 
     # La base define el timestamp para evitar datetimes sin timezone en Python.
     changed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -148,7 +174,12 @@ class TicketTeamHistory(Base):
     old_team_id = Column(UUID(as_uuid=True), ForeignKey("teams.id"), nullable=True)
     new_team_id = Column(UUID(as_uuid=True), ForeignKey("teams.id"), nullable=True)
 
-    changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    source = Column(
+        SqlEnum(AssignmentSource, name="assignmentsource"),
+        default=AssignmentSource.MANUAL,
+        nullable=False,
+    )
     changed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

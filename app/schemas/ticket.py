@@ -4,7 +4,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.ticket import TicketCommentVisibility, TicketPriority, TicketStatus
+from app.models.category import TeamAssignmentStrategy
+from app.models.team import AssignmentStrategy
+from app.models.ticket import AssignmentSource, TicketCommentVisibility, TicketPriority, TicketStatus
 
 # SCHEMAS GLOBALES DE TICKET
 class TicketCreate(BaseModel):
@@ -27,6 +29,11 @@ class TicketRead(BaseModel):
     team_id: Optional[UUID] = None
     category_id: UUID
     closed_at: Optional[datetime] = None
+    team_queue_entered_at: Optional[datetime] = None
+    team_assignment_due_at: Optional[datetime] = None
+    team_assignment_strategy: Optional[TeamAssignmentStrategy] = None
+    auto_assignment_due_at: Optional[datetime] = None
+    auto_assignment_strategy: Optional[AssignmentStrategy] = None
     archived_at: Optional[datetime] = None
     archived_by: Optional[UUID] = None
     archive_reason: Optional[str] = None
@@ -88,7 +95,8 @@ class TicketAssignmentHistoryRead(BaseModel):
 
     old_assigned_to: Optional[UUID] = None
     new_assigned_to: Optional[UUID] = None
-    changed_by: UUID
+    changed_by: Optional[UUID] = None
+    source: AssignmentSource
     changed_at: datetime
 
 
@@ -97,7 +105,8 @@ class TicketTeamHistoryRead(BaseModel):
 
     old_team_id: Optional[UUID] = None
     new_team_id: Optional[UUID] = None
-    changed_by: UUID
+    changed_by: Optional[UUID] = None
+    source: AssignmentSource
     changed_at: datetime
 
 

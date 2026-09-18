@@ -6,7 +6,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models.category import CategoryTeam, TicketCategory
+from app.models.category import CategoryTeam, TeamAssignmentStrategy, TicketCategory
 from app.models.team import Team, TeamMember
 from app.models.ticket import Ticket, TicketStatus
 from app.models.user import User, UserRole
@@ -49,6 +49,10 @@ class CategoryPermissionError(CategoryServiceError):
     pass
 
 
+class InvalidCategoryAssignmentSettingsError(CategoryServiceError):
+    pass
+
+
 def _normalize_category_name(name: str) -> str:
     normalized_name = name.strip()
     if not normalized_name:
@@ -74,6 +78,9 @@ def create_category_service(db: Session, category_in: TicketCategoryCreate) -> T
         name=normalized_name,
         description=category_in.description,
         is_active=True,
+        auto_team_assignment_enabled=category_in.auto_team_assignment_enabled,
+        team_assignment_delay_minutes=category_in.team_assignment_delay_minutes,
+        team_assignment_strategy=category_in.team_assignment_strategy,
     )
 
     try:
@@ -84,6 +91,35 @@ def create_category_service(db: Session, category_in: TicketCategoryCreate) -> T
     except IntegrityError as exc:
         db.rollback()
         raise CategoryDataConflictError("The category could not be created because of a data conflict") from exc
+    except Exception:
+        db.rollback()
+        raise
+
+
+def update_category_team_assignment_service(
+    db: Session,
+    category_id: UUID,
+    enabled: bool,
+    delay_minutes: int,
+    strategy: TeamAssignmentStrategy,
+) -> TicketCategory:
+    """Configura el routing automático para tickets futuros de la categoría."""
+
+    if delay_minutes < 0:
+        raise InvalidCategoryAssignmentSettingsError("Team-assignment delay cannot be negative")
+
+    category = db.query(TicketCategory).filter(TicketCategory.id == category_id).first()
+    if category is None:
+        raise CategoryNotFoundError("Category not found")
+
+    category.auto_team_assignment_enabled = enabled
+    category.team_assignment_delay_minutes = delay_minutes
+    category.team_assignment_strategy = strategy
+
+    try:
+        db.commit()
+        db.refresh(category)
+        return category
     except Exception:
         db.rollback()
         raise

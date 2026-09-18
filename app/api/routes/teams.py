@@ -157,7 +157,7 @@ def update_team_auto_assignment(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("ADMIN")),
 ):
-    """Guarda la política de autoasignación; todavía no ejecuta el proceso."""
+    """Guarda la política que se copiará a los tickets que ingresen al team."""
 
     try:
         return update_team_auto_assignment_service(

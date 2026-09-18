@@ -1,23 +1,28 @@
 """Flujos criticos de tickets ejecutados contra PostgreSQL real."""
 
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
 
-from app.models.category import TicketCategory
-from app.models.team import Team, TeamMember
+from app.models.category import CategoryTeam, TeamAssignmentStrategy, TicketCategory
+from app.models.team import AssignmentStrategy, Team, TeamMember
 from app.models.ticket import (
     Ticket,
+    AssignmentSource,
     TicketAssignmentHistory,
     TicketCommentVisibility,
     TicketDependency,
     TicketStatus,
     TicketStatusHistory,
+    TicketTeamHistory,
 )
 from app.models.user import User, UserRole
 from app.schemas.ticket import TicketCommentCreate, TicketCreate
 from app.services.ticket_comment_service import create_ticket_comment, get_ticket_comments
 from app.services.ticket_assignment_service import claim_ticket
+from app.services.ticket_auto_assignment_service import find_team_auto_assignment_candidate
+from app.services.ticket_auto_assignment_service import process_due_auto_assignments
 from app.services.ticket_dependency_service import add_ticket_dependency
 from app.services.ticket_exceptions import (
     TicketBlockedByOpenDependenciesError,
@@ -268,3 +273,182 @@ def test_operational_member_claims_team_ticket_and_persists_assignment_history(
     assert history.old_assigned_to is None
     assert history.new_assigned_to == operational_user.id
     assert history.changed_by == operational_user.id
+    integration_db.refresh(operational_user)
+    assert operational_user.last_assigned_at is not None
+
+
+def test_least_active_selector_uses_real_team_members_and_ticket_counts(integration_db):
+    """Comprueba candidatos, roles y carga activa mediante consultas SQL reales."""
+
+    requester = _create_user(integration_db, UserRole.USER)
+    busy_agent = _create_user(integration_db, UserRole.AGENT)
+    available_admin = _create_user(integration_db, UserRole.ADMIN)
+    inactive_agent = _create_user(integration_db, UserRole.AGENT)
+    inactive_agent.is_active = False
+    category = _create_category(integration_db)
+    team = Team(name=f"Team {uuid4()}")
+    integration_db.add(team)
+    integration_db.flush()
+    integration_db.add_all(
+        [
+            # El selector también se protege ante una membresía inválida creada fuera del service.
+            TeamMember(team_id=team.id, user_id=requester.id),
+            TeamMember(team_id=team.id, user_id=busy_agent.id),
+            TeamMember(team_id=team.id, user_id=available_admin.id),
+            TeamMember(team_id=team.id, user_id=inactive_agent.id),
+        ]
+    )
+    _create_ticket(
+        integration_db,
+        requester,
+        category,
+        team_id=team.id,
+        assigned_to=busy_agent.id,
+        status=TicketStatus.IN_PROGRESS,
+    )
+    integration_db.flush()
+
+    result = find_team_auto_assignment_candidate(
+        integration_db,
+        team.id,
+        AssignmentStrategy.LEAST_ACTIVE,
+    )
+
+    assert result.id == available_admin.id
+
+
+def test_due_ticket_is_assigned_to_team_and_member_in_one_processing_run(integration_db):
+    """Comprueba routing, responsable, vencimientos e historiales automáticos."""
+
+    requester = _create_user(integration_db, UserRole.USER)
+    team_a_busy_agent = _create_user(integration_db, UserRole.AGENT)
+    team_a_available_admin = _create_user(integration_db, UserRole.ADMIN)
+    team_b_agent = _create_user(integration_db, UserRole.AGENT)
+    category = TicketCategory(
+        name=f"Categoria {uuid4()}",
+        is_active=True,
+        auto_team_assignment_enabled=True,
+        team_assignment_delay_minutes=0,
+        team_assignment_strategy=TeamAssignmentStrategy.LEAST_LOAD_PER_MEMBER,
+    )
+    team_a = Team(
+        name=f"Team A {uuid4()}",
+        auto_assignment_enabled=True,
+        auto_assignment_delay_minutes=0,
+        assignment_strategy=AssignmentStrategy.LEAST_ACTIVE,
+    )
+    team_b = Team(
+        name=f"Team B {uuid4()}",
+        auto_assignment_enabled=True,
+        auto_assignment_delay_minutes=0,
+        assignment_strategy=AssignmentStrategy.LEAST_ACTIVE,
+    )
+    integration_db.add_all([category, team_a, team_b])
+    integration_db.flush()
+    integration_db.add_all(
+        [
+            CategoryTeam(category_id=category.id, team_id=team_a.id),
+            CategoryTeam(category_id=category.id, team_id=team_b.id),
+            TeamMember(team_id=team_a.id, user_id=team_a_busy_agent.id),
+            TeamMember(team_id=team_a.id, user_id=team_a_available_admin.id),
+            TeamMember(team_id=team_b.id, user_id=team_b_agent.id),
+        ]
+    )
+    _create_ticket(
+        integration_db,
+        requester,
+        category,
+        team_id=team_a.id,
+        assigned_to=team_a_busy_agent.id,
+        status=TicketStatus.IN_PROGRESS,
+    )
+    _create_ticket(
+        integration_db,
+        requester,
+        category,
+        team_id=team_b.id,
+        assigned_to=team_b_agent.id,
+        status=TicketStatus.IN_PROGRESS,
+    )
+    integration_db.commit()
+
+    ticket = create_ticket_service(
+        integration_db,
+        TicketCreate(
+            title="Ticket para routing automático",
+            description="Debe atravesar ambas etapas",
+            category_id=category.id,
+        ),
+        requester,
+    )
+    result = process_due_auto_assignments(
+        integration_db,
+        now=datetime.now(timezone.utc),
+    )
+    integration_db.refresh(ticket)
+
+    assert result.teams_assigned == 1
+    assert result.users_assigned == 1
+    assert ticket.team_id == team_a.id
+    assert ticket.assigned_to == team_a_available_admin.id
+    assert ticket.team_queue_entered_at is None
+    assert ticket.team_assignment_due_at is None
+    assert ticket.auto_assignment_due_at is None
+
+    team_history = (
+        integration_db.query(TicketTeamHistory)
+        .filter(TicketTeamHistory.ticket_id == ticket.id)
+        .one()
+    )
+    assignment_history = (
+        integration_db.query(TicketAssignmentHistory)
+        .filter(TicketAssignmentHistory.ticket_id == ticket.id)
+        .one()
+    )
+    assert team_history.changed_by is None
+    assert team_history.source == AssignmentSource.AUTOMATIC
+    assert assignment_history.changed_by is None
+    assert assignment_history.source == AssignmentSource.AUTOMATIC
+
+
+def test_due_ticket_remains_queued_when_category_has_no_operational_team(integration_db):
+    """Un intento sin candidatos no consume el vencimiento ni altera el ticket."""
+
+    requester = _create_user(integration_db, UserRole.USER)
+    category = TicketCategory(
+        name=f"Categoria sin candidatos {uuid4()}",
+        is_active=True,
+        auto_team_assignment_enabled=True,
+        team_assignment_delay_minutes=0,
+        team_assignment_strategy=TeamAssignmentStrategy.LEAST_LOAD_PER_MEMBER,
+    )
+    integration_db.add(category)
+    integration_db.commit()
+    ticket = create_ticket_service(
+        integration_db,
+        TicketCreate(
+            title="Ticket que debe seguir en cola",
+            description="No hay equipos operativos disponibles",
+            category_id=category.id,
+        ),
+        requester,
+    )
+    original_due_at = ticket.team_assignment_due_at
+
+    result = process_due_auto_assignments(
+        integration_db,
+        now=datetime.now(timezone.utc),
+    )
+    integration_db.refresh(ticket)
+
+    assert result.teams_assigned == 0
+    assert result.users_assigned == 0
+    assert ticket.team_id is None
+    assert ticket.assigned_to is None
+    assert ticket.team_assignment_due_at == original_due_at
+    assert (
+        integration_db.query(TicketTeamHistory)
+        .filter(TicketTeamHistory.ticket_id == ticket.id)
+        .count()
+        == 0
+    )

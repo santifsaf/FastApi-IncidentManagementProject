@@ -12,6 +12,7 @@ from app.models.ticket import (
     TicketStatus,
     TicketStatusHistory,
 )
+from app.models.category import TeamAssignmentStrategy
 from app.services.ticket_dependency_service import (
     add_ticket_dependency,
     create_blocking_ticket,
@@ -70,7 +71,13 @@ def test_add_ticket_dependency_rejects_missing_blocking_ticket():
 
 
 def test_create_blocking_ticket_creates_ticket_dependency_and_sets_current_ticket_on_hold():
-    category = SimpleNamespace(id=uuid4(), is_active=True)
+    category = SimpleNamespace(
+        id=uuid4(),
+        is_active=True,
+        auto_team_assignment_enabled=False,
+        team_assignment_delay_minutes=0,
+        team_assignment_strategy=TeamAssignmentStrategy.LEAST_LOAD_PER_MEMBER,
+    )
     ticket = SimpleNamespace(
         id=uuid4(),
         status=TicketStatus.IN_PROGRESS,

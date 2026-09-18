@@ -4,6 +4,7 @@ Las operaciones especializadas viven en services separados para que este
 modulo conserve una responsabilidad pequena y facil de reconocer.
 """
 
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import or_, select
@@ -15,6 +16,7 @@ from app.models.team import TeamMember
 from app.models.ticket import Ticket, TicketStatus
 from app.models.user import User, UserRole
 from app.schemas.ticket import TicketCreate
+from app.services.assignment_timing import calculate_assignment_due_at
 from app.services.team_queries import is_team_member
 from app.services.ticket_exceptions import (
     InvalidTicketCategoryError,
@@ -34,6 +36,7 @@ def create_ticket_service(db: Session, ticket_in: TicketCreate, current_user: Us
     if not category.is_active:
         raise InvalidTicketCategoryError("Inactive categories cannot be used for new tickets")
 
+    now = datetime.now(timezone.utc)
     new_ticket = Ticket(
         title=ticket_in.title,
         description=ticket_in.description,
@@ -41,6 +44,17 @@ def create_ticket_service(db: Session, ticket_in: TicketCreate, current_user: Us
         priority=ticket_in.priority,
         created_by=current_user.id,
         category_id=category.id,
+        team_queue_entered_at=now,
+        team_assignment_due_at=calculate_assignment_due_at(
+            category.auto_team_assignment_enabled,
+            category.team_assignment_delay_minutes,
+            now=now,
+        ),
+        team_assignment_strategy=(
+            category.team_assignment_strategy
+            if category.auto_team_assignment_enabled
+            else None
+        ),
     )
     db.add(new_ticket)
     return commit_and_refresh(db, new_ticket)

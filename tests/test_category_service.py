@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.models.category import CategoryTeam, TicketCategory
+from app.models.category import CategoryTeam, TeamAssignmentStrategy, TicketCategory
 from app.models.team import Team, TeamMember
 from app.models.ticket import Ticket, TicketStatus
 from app.models.user import UserRole
@@ -20,6 +20,7 @@ from app.services.category_service import (
     InvalidCategoryNameError,
     add_category_team_service,
     create_category_service,
+    update_category_team_assignment_service,
     get_category_ticket_queue_service,
 )
 
@@ -94,7 +95,13 @@ class FakeDb:
 
 def test_create_category_service_creates_active_category_with_normalized_name():
     db = FakeDb(category=None)
-    category_in = SimpleNamespace(name="  Hardware  ", description="Devices")
+    category_in = SimpleNamespace(
+        name="  Hardware  ",
+        description="Devices",
+        auto_team_assignment_enabled=False,
+        team_assignment_delay_minutes=0,
+        team_assignment_strategy=TeamAssignmentStrategy.LEAST_LOAD_PER_MEMBER,
+    )
 
     result = create_category_service(db, category_in)
 
@@ -104,6 +111,29 @@ def test_create_category_service_creates_active_category_with_normalized_name():
     assert result.is_active is True
     assert db.committed is True
     assert db.refreshed is result
+
+
+def test_admin_configuration_updates_category_team_assignment():
+    category = SimpleNamespace(
+        id=uuid4(),
+        auto_team_assignment_enabled=False,
+        team_assignment_delay_minutes=0,
+        team_assignment_strategy=TeamAssignmentStrategy.LEAST_LOAD_PER_MEMBER,
+    )
+    db = FakeDb(category=category)
+
+    result = update_category_team_assignment_service(
+        db,
+        category.id,
+        True,
+        15,
+        TeamAssignmentStrategy.LEAST_LOAD_PER_MEMBER,
+    )
+
+    assert result is category
+    assert category.auto_team_assignment_enabled is True
+    assert category.team_assignment_delay_minutes == 15
+    assert db.committed is True
 
 
 def test_create_category_service_rejects_empty_name():

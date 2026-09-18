@@ -251,7 +251,7 @@ antes de emitir el token.
 - crea y consulta equipos;
 - administra miembros y múltiples leads;
 - impide quitar al último lead;
-- configura reclamo manual y futura autoasignación;
+- configura reclamo manual y autoasignación por delay;
 - lista la cola de tickets de un equipo.
 
 Algunas lecturas simples todavía consultan SQLAlchemy directamente en este
@@ -333,8 +333,10 @@ permite varios leads, evitando depender de una única persona disponible.
 un ticket del equipo. `auto_assignment_enabled`, el delay y la estrategia
 configuran una futura asignación hecha por el sistema.
 
-Importante: la configuración de autoasignación se persiste, pero el selector y
-el worker que ejecutarán la asignación todavía no están implementados.
+La configuración se copia al ticket cuando entra en cada cola. Así, un cambio
+posterior en la categoría o el team solo afecta tickets futuros. El ejecutor
+transaccional ya está implementado; por ahora se invoca mediante un script y
+queda pendiente conectarlo a un worker periódico.
 
 #### `ticket.py`
 
@@ -394,6 +396,17 @@ del ticket.
 Valida acceso, visibilidad, estado del ticket y contenido no vacío. En lectura,
 filtra notas internas para que el solicitante reciba solamente respuestas
 públicas. La paginación usa fecha e ID para mantener un orden estable.
+
+#### `ticket_auto_assignment_service.py`
+
+Procesa las dos etapas de autoasignación. Primero selecciona entre los equipos
+asociados a la categoría usando carga activa por miembro operativo. Después
+elige un miembro activo mediante `LEAST_ACTIVE` o `LONGEST_IDLE`. Las filas de
+ticket se bloquean con `FOR UPDATE SKIP LOCKED` para que dos workers no procesen
+el mismo ticket; si no hay candidato, permanece en cola para otro intento.
+
+Los historiales distinguen `MANUAL`, `CLAIM` y `AUTOMATIC`. En una acción
+automática, `changed_by` queda en `NULL` porque no intervino una persona.
 
 #### `ticket_exceptions.py`
 
@@ -580,7 +593,7 @@ Las migraciones de `alembic/versions/` cuentan la evolución del modelo:
 16. comentarios con visibilidad;
 17. obligación de tener team antes de responsable;
 18. reclamo manual por equipo;
-19. configuración de futura autoasignación.
+19. autoasignación escalonada de categoría a team y de team a responsable.
 
 Comandos habituales:
 
@@ -650,22 +663,18 @@ auto_assignment_delay_minutes
 assignment_strategy = LEAST_ACTIVE | LONGEST_IDLE
 ```
 
-Estos campos permiten que cada equipo defina su política. En la versión actual
-solo se guardan y validan. Falta implementar:
-
-- cálculo del vencimiento del delay desde la asignación al equipo;
-- selección de candidatos activos del equipo;
-- conteo de tickets activos o cálculo de última asignación;
-- actualización atómica del responsable;
-- worker periódico;
-- tests de concurrencia para el selector.
+Estos campos permiten que cada equipo defina su política. El vencimiento se
+calcula al ingresar al team y queda guardado en el ticket junto con la
+estrategia vigente. El service actualiza responsable e historial en una misma
+transacción. Falta conectar ese procesamiento a un worker periódico y ampliar
+las pruebas de concurrencia con varios workers reales.
 
 ## 9. Deuda técnica y próximos pasos
 
 ### Prioridad alta
 
-1. Implementar el selector de autoasignación y probarlo como función/service
-   determinista antes de agregar un worker.
+1. Integrar `process_due_auto_assignments()` con un worker periódico; el script
+   actual permite ejecutar y probar el procesamiento manualmente.
 2. Completar el uso de datetimes con timezone. Algunos campos antiguos todavía
    usan `datetime.utcnow()` y generan advertencias.
 3. Decidir si las consultas simples que aún viven en routers de teams/categories/
@@ -781,6 +790,10 @@ trabajo futuro introduce.
   estados, historial de estado y archivado.
 - [`app/services/ticket_comment_service.py`](app/services/ticket_comment_service.py):
   creación, permisos y lectura filtrada de comentarios.
+- [`app/services/ticket_auto_assignment_service.py`](app/services/ticket_auto_assignment_service.py):
+  selección y procesamiento transaccional de teams y responsables automáticos.
+- [`app/services/assignment_timing.py`](app/services/assignment_timing.py):
+  cálculo centralizado de vencimientos según configuración y delay.
 - [`app/services/ticket_dependency_service.py`](app/services/ticket_dependency_service.py):
   dependencias y creación de tickets bloqueantes.
 - [`app/services/ticket_exceptions.py`](app/services/ticket_exceptions.py):
@@ -792,6 +805,8 @@ trabajo futuro introduce.
 
 - [`app/scripts/archive_closed_tickets.py`](app/scripts/archive_closed_tickets.py):
   ejecuta archivado por antigüedad desde consola.
+- [`app/scripts/process_auto_assignments.py`](app/scripts/process_auto_assignments.py):
+  procesa manualmente una tanda de autoasignaciones vencidas.
 - [`app/scripts/create_test_database.py`](app/scripts/create_test_database.py):
   crea o reconstruye exclusivamente la base de integración.
 
@@ -805,6 +820,8 @@ trabajo futuro introduce.
 - [`tests/test_user_service.py`](tests/test_user_service.py): creación de usuarios.
 - [`tests/test_category_service.py`](tests/test_category_service.py): categorías y
   colas.
+- [`tests/test_category_routes.py`](tests/test_category_routes.py): contrato HTTP
+  de configuración de routing de categorías.
 - [`tests/test_team_queries.py`](tests/test_team_queries.py): membresía y liderazgo.
 - [`tests/test_team_service.py`](tests/test_team_service.py): casos de uso de teams.
 - [`tests/test_team_routes.py`](tests/test_team_routes.py): contrato HTTP de teams.
@@ -819,6 +836,8 @@ trabajo futuro introduce.
   dependencias.
 - [`tests/test_ticket_comment_service.py`](tests/test_ticket_comment_service.py):
   visibilidad de comentarios.
+- [`tests/test_ticket_auto_assignment_service.py`](tests/test_ticket_auto_assignment_service.py):
+  estrategias y desempates del selector automático.
 - [`tests/test_ticket_routes.py`](tests/test_ticket_routes.py): contrato HTTP de
   tickets con `TestClient`.
 - [`tests/integration/conftest.py`](tests/integration/conftest.py): PostgreSQL y

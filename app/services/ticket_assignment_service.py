@@ -1,7 +1,9 @@
 """Casos de uso de asignacion, equipo y categoria de tickets."""
 
+from datetime import datetime, timezone
 from uuid import UUID
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.ticket_rules import (
@@ -12,6 +14,7 @@ from app.core.ticket_rules import (
 from app.models.category import TicketCategory
 from app.models.team import Team
 from app.models.ticket import (
+    AssignmentSource,
     Ticket,
     TicketAssignmentHistory,
     TicketCategoryHistory,
@@ -19,6 +22,7 @@ from app.models.ticket import (
     TicketTeamHistory,
 )
 from app.models.user import User, UserRole
+from app.services.assignment_timing import calculate_assignment_due_at
 from app.services.category_queries import is_category_associated_with_team
 from app.services.team_queries import is_team_lead, is_team_member
 from app.services.ticket_exceptions import (
@@ -39,20 +43,31 @@ from app.services.ticket_exceptions import (
 from app.services.ticket_service_utils import commit_and_refresh, normalize_optional_reason
 
 
-def _assign_ticket_to_user(db: Session, ticket: Ticket, new_user_id: UUID, changed_by_id: UUID) -> Ticket:
-    """Actualiza el responsable y registra ambos cambios en una transaccion."""
+def complete_ticket_user_assignment(
+    db: Session,
+    ticket: Ticket,
+    new_user: User,
+    changed_by_id: UUID | None,
+    source: AssignmentSource,
+) -> Ticket:
+    """Actualiza responsable, vencimiento e historial en una transacción."""
 
     old_assigned_to = ticket.assigned_to
-    if old_assigned_to == new_user_id:
+    if old_assigned_to == new_user.id:
         raise TicketAlreadyAssignedError("Ticket already assigned to this user")
 
-    ticket.assigned_to = new_user_id
+    ticket.assigned_to = new_user.id
+    ticket.auto_assignment_due_at = None
+    ticket.auto_assignment_strategy = None
+    # Ambas estrategias necesitan conocer cuándo recibió trabajo por última vez.
+    new_user.last_assigned_at = func.now()
     db.add(
         TicketAssignmentHistory(
             ticket_id=ticket.id,
             old_assigned_to=old_assigned_to,
-            new_assigned_to=new_user_id,
+            new_assigned_to=new_user.id,
             changed_by=changed_by_id,
+            source=source,
         )
     )
     return commit_and_refresh(db, ticket)
@@ -87,7 +102,13 @@ def assign_ticket(db: Session, ticket_id: UUID, assigned_user_id: UUID, current_
     ):
         raise TicketPermissionError("Not enough permissions or invalid assignment")
 
-    return _assign_ticket_to_user(db, ticket, assigned_user.id, current_user.id)
+    return complete_ticket_user_assignment(
+        db,
+        ticket,
+        assigned_user,
+        current_user.id,
+        AssignmentSource.MANUAL,
+    )
 
 
 def claim_ticket(db: Session, ticket_id: UUID, current_user: User) -> Ticket:
@@ -138,7 +159,13 @@ def claim_ticket(db: Session, ticket_id: UUID, current_user: User) -> Ticket:
         ):
             raise TicketClaimNotAllowedError("Ticket cannot be claimed")
 
-        return _assign_ticket_to_user(db, ticket, current_user.id, current_user.id)
+        return complete_ticket_user_assignment(
+            db,
+            ticket,
+            current_user,
+            current_user.id,
+            AssignmentSource.CLAIM,
+        )
     except Exception:
         # Tambien libera el FOR UPDATE cuando una validacion rechaza el reclamo.
         db.rollback()
@@ -172,13 +199,26 @@ def assign_ticket_to_team(db: Session, ticket_id: UUID, team_id: UUID, current_u
         raise TicketTeamAssignmentError("Assigned user does not belong to target team")
 
     old_team_id = ticket.team_id
+    now = datetime.now(timezone.utc)
     ticket.team_id = team.id
+    ticket.team_queue_entered_at = None
+    ticket.team_assignment_due_at = None
+    ticket.team_assignment_strategy = None
+    ticket.auto_assignment_due_at = calculate_assignment_due_at(
+        team.auto_assignment_enabled,
+        team.auto_assignment_delay_minutes,
+        now=now,
+    )
+    ticket.auto_assignment_strategy = (
+        team.assignment_strategy if team.auto_assignment_enabled else None
+    )
     db.add(
         TicketTeamHistory(
             ticket_id=ticket.id,
             old_team_id=old_team_id,
             new_team_id=team.id,
             changed_by=current_user.id,
+            source=AssignmentSource.MANUAL,
         )
     )
     return commit_and_refresh(db, ticket)
@@ -226,9 +266,23 @@ def change_ticket_category(
     old_category_id = ticket.category_id
     old_team_id = ticket.team_id
     old_assigned_to = ticket.assigned_to
+    now = datetime.now(timezone.utc)
     ticket.category_id = new_category.id
     ticket.team_id = None
     ticket.assigned_to = None
+    ticket.team_queue_entered_at = now
+    ticket.team_assignment_due_at = calculate_assignment_due_at(
+        new_category.auto_team_assignment_enabled,
+        new_category.team_assignment_delay_minutes,
+        now=now,
+    )
+    ticket.team_assignment_strategy = (
+        new_category.team_assignment_strategy
+        if new_category.auto_team_assignment_enabled
+        else None
+    )
+    ticket.auto_assignment_due_at = None
+    ticket.auto_assignment_strategy = None
 
     db.add(
         TicketCategoryHistory(
@@ -246,6 +300,7 @@ def change_ticket_category(
                 old_team_id=old_team_id,
                 new_team_id=None,
                 changed_by=current_user.id,
+                source=AssignmentSource.MANUAL,
             )
         )
     if old_assigned_to is not None:
@@ -255,6 +310,7 @@ def change_ticket_category(
                 old_assigned_to=old_assigned_to,
                 new_assigned_to=None,
                 changed_by=current_user.id,
+                source=AssignmentSource.MANUAL,
             )
         )
 

@@ -1,5 +1,6 @@
 """Casos de uso para dependencias y tickets bloqueantes."""
 
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import func
@@ -9,6 +10,7 @@ from app.core.ticket_rules import can_user_view_assignment_history
 from app.models.category import TicketCategory
 from app.models.ticket import Ticket, TicketDependency, TicketStatus, TicketStatusHistory
 from app.models.user import User, UserRole
+from app.services.assignment_timing import calculate_assignment_due_at
 from app.services.team_queries import is_team_lead, is_team_member
 from app.services.ticket_exceptions import (
     InvalidTicketCategoryError,
@@ -208,6 +210,7 @@ def create_blocking_ticket(db: Session, ticket_id: UUID, blocking_ticket_in, cur
     if not category.is_active:
         raise InvalidTicketCategoryError("Inactive categories cannot be used for new tickets")
 
+    now = datetime.now(timezone.utc)
     blocking_ticket = Ticket(
         title=blocking_ticket_in.title,
         description=blocking_ticket_in.description,
@@ -215,6 +218,17 @@ def create_blocking_ticket(db: Session, ticket_id: UUID, blocking_ticket_in, cur
         priority=blocking_ticket_in.priority,
         created_by=current_user.id,
         category_id=category.id,
+        team_queue_entered_at=now,
+        team_assignment_due_at=calculate_assignment_due_at(
+            category.auto_team_assignment_enabled,
+            category.team_assignment_delay_minutes,
+            now=now,
+        ),
+        team_assignment_strategy=(
+            category.team_assignment_strategy
+            if category.auto_team_assignment_enabled
+            else None
+        ),
     )
     db.add(blocking_ticket)
     # flush obtiene el UUID sin confirmar; un rollback posterior revierte todo.
